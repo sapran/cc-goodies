@@ -1,0 +1,24 @@
+{
+  "name": "cc-goodies",
+  "owner": {
+    "name": "Volodymyr Styran",
+    "url": "https://github.com/sapran"
+  },
+  "metadata": {
+    "description": "Developer-experience extras for Claude Code: spoken notifications and an enriched statusline.",
+    "version": "0.1.0",
+    "repository": "https://github.com/sapran/cc-goodies"
+  },
+  "plugins": [
+    {
+      "name": "voice-notify",
+      "source": "./plugins/voice-notify",
+      "description": "Spoken macOS notifications (via `say`) when Claude needs your attention or finishes a turn. Rotating first-person phrases, configurable voice."
+    },
+    {
+      "name": "statusline",
+      "source": "./plugins/statusline",
+      "description": "Enriched two-line statusline: user@host, cwd, branch/worktree, task focus, model, effort, context and rate-limit usage."
+    }
+  ]
+}

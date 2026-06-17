@@ -1,0 +1,39 @@
+{
+  "name": "voice-notify",
+  "version": "0.1.0",
+  "description": "Spoken macOS notifications when Claude needs your attention or finishes a turn.",
+  "author": {
+    "name": "Volodymyr Styran",
+    "url": "https://github.com/sapran"
+  },
+  "license": "MIT",
+  "keywords": ["notifications", "tts", "say", "macos", "hooks"],
+  "hooks": {
+    "Notification": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
+            "args": ["notification"],
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
+            "args": ["stop"],
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}
