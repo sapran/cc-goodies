@@ -5,7 +5,7 @@
     "url": "https://github.com/sapran"
   },
   "metadata": {
-    "description": "Developer-experience extras for Claude Code: spoken notifications and an enriched statusline.",
+    "description": "Developer-experience extras for Claude Code: spoken notifications, an enriched statusline, and a protected-branch guard.",
     "version": "0.1.0",
     "repository": "https://github.com/sapran/cc-goodies"
   },
@@ -19,6 +19,11 @@
       "name": "statusline",
       "source": "./plugins/statusline",
       "description": "Enriched two-line statusline: user@host, cwd, branch/worktree, task focus, model, effort, context and rate-limit usage."
+    },
+    {
+      "name": "git-guard",
+      "source": "./plugins/git-guard",
+      "description": "Block accidental commits, merges and pushes to protected branches (main/master) before they run. Selectable policies, configurable branch lists."
     }
   ]
 }

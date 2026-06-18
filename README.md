@@ -1,11 +1,12 @@
 # cc-goodies
 
-Developer-experience extras for [Claude Code](https://claude.com/claude-code), shared as a plugin marketplace. Two small, **independent, opt-in** plugins:
+Developer-experience extras for [Claude Code](https://claude.com/claude-code), shared as a plugin marketplace. Small, **independent, opt-in** plugins:
 
 | Plugin | What it does |
 |--------|--------------|
 | **[voice-notify](plugins/voice-notify)** | Speaks a short, rotating, first-person cue (macOS `say`) when Claude needs your attention or finishes a turn. |
 | **[statusline](plugins/statusline)** | An enriched two-line statusline: `user@host`, cwd, branch/worktree, task focus, model, effort, context % and rate-limit %. |
+| **[git-guard](plugins/git-guard)** | Blocks accidental commits/merges/pushes to protected branches (`main`/`master`) before they run. Selectable policies, configurable branches. Cross-platform. |
 
 ## Install
 
@@ -13,6 +14,7 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 /plugin marketplace add sapran/cc-goodies
 /plugin install voice-notify@cc-goodies     # the talking one
 /plugin install statusline@cc-goodies        # the statusline
+/plugin install git-guard@cc-goodies         # the branch guard
 /statusline-setup                             # one-time wiring (statusline only)
 ```
 

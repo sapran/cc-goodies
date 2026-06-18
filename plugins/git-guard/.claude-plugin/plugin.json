@@ -1,0 +1,25 @@
+{
+  "name": "git-guard",
+  "version": "0.1.0",
+  "description": "Block accidental commits, merges and pushes to protected branches (main/master) before they run. Selectable policies, configurable branch lists.",
+  "author": {
+    "name": "Volodymyr Styran",
+    "url": "https://github.com/sapran"
+  },
+  "license": "MIT",
+  "keywords": ["git", "hooks", "safety", "branch-protection", "pretooluse"],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/git-guard.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
