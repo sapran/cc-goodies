@@ -61,6 +61,16 @@ GIT_GUARD_MAIN_BRANCHES="main master release"
 The easiest way to edit it is the `/git-guard` command, which shows the current
 state and writes the file for you.
 
+## Uninstall
+
+```text
+/git-guard-uninstall                     # removes ~/.claude/git-guard.conf (asks first)
+/plugin uninstall git-guard@cc-goodies   # removes the plugin and its hook
+```
+
+To **pause** without removing, set `GIT_GUARD_DISABLE=1` (via `/git-guard`, or as a
+line in `~/.claude/git-guard.conf`): the guard no-ops but stays installed.
+
 ## What it catches
 
 Target branches are resolved properly, not by substring matching:
@@ -78,6 +88,13 @@ Target branches are resolved properly, not by substring matching:
 
 ## Limitations
 
+- **Branch is resolved from the session's working directory.** The guard reads the
+  branch of the directory Claude is running in — not a `cd /other/repo &&` target
+  inside the command. So a command that `cd`s into a *different* repo is judged
+  against the session repo's branch, which can both over-block (harmless) and, if the
+  session sits on an unprotected branch, miss a write to another repo's `main`. Use
+  the `git -C /path …` form for another repo — that **is** resolved correctly. Working
+  normally inside the repo is fully covered.
 - **Best-effort shell parsing.** Exotic quoting or aliases that hide a `git` verb can
   slip through — this is a convenience guard, not a server-side branch protection.
   Pair it with real protections (GitHub branch rules) for anything that matters.
