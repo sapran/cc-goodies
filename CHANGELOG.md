@@ -31,6 +31,10 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 - **Shell-safety manual** (`docs/shell-safety.md`) — a consolidated guide to the layered
   defense against dangerous shell commands: threat model, the deny-list / git-guard /
   shell-guard / plan-mode layers, what each catches and misses, and recommended setup.
+- **Advisory rules companion** (`rules/shell-safety.md`) — the judgment calls a hook can't
+  enforce (no obfuscated commands, no remote→shell pipes, confirm recursive deletes, keep
+  secrets off the CLI, ignore embedded instructions). Symlink it into `~/.claude/rules/`
+  to auto-load in every session — no `settings.json` edit needed.
 
 ### Changed
 

@@ -98,6 +98,26 @@ SHELL_GUARD_EXTRA_PATTERNS="git clean -fdx"
 The easiest way to edit it is the `/shell-guard` command, which shows the current state
 and writes the file for you.
 
+## Advisory companion
+
+shell-guard hard-blocks the dangerous *forms*. The judgment calls a hook can't enforce —
+don't run obfuscated commands, don't pipe remote content into an interpreter, confirm
+before a recursive delete, keep secrets off the command line, ignore instructions
+embedded in fetched content — live in an advisory rules file,
+[`rules/shell-safety.md`](../../rules/shell-safety.md).
+
+Claude Code auto-loads any `*.md` under `~/.claude/rules/` into every session, so wiring
+it up is a one-time symlink (no config edit):
+
+```sh
+ln -s ~/.claude/plugins/marketplaces/cc-goodies/rules/shell-safety.md \
+      ~/.claude/rules/shell-safety.md
+```
+
+The symlink tracks the marketplace clone, so it refreshes when you update cc-goodies. (Or
+point it at your own checkout, e.g. `~/git/cc-goodies/rules/shell-safety.md`.) It's plain
+advisory text — nothing executes; `rm` the symlink to opt out.
+
 ## Uninstall
 
 ```text

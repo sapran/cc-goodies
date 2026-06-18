@@ -41,6 +41,7 @@ one layer is covered by another.
 | **1. Deny list** | Exact string match on the command | Harness (`permissions.deny`) | closed (blocks) | a fixed, enumerated set | re-ordered flags, quoting, variables, anything not listed |
 | **2. git-guard** | Parses the git verb + resolves the branch | Plugin PreToolUse hook | **open** (allows if `jq` missing) | commit/merge/pull/rebase/push onto protected branches | exotic quoting; non-git destructive ops |
 | **3. shell-guard** | Normalizes flags + resolves the target | Plugin PreToolUse hook | **open** (allows if `jq` missing) | a curated dangerous-command set (covers a typical shell deny list) | anything outside that set; heavy obfuscation |
+| **4. Advisory rules** | Reasoning from `~/.claude/rules/*.md` | The agent (not enforced) | n/a | judgment calls: obfuscation, piping remote→shell, prompt injection, secrets on the CLI | anything the agent overlooks or is told to ignore |
 
 > `rtk-hook` is **not** a security layer — it is a token optimizer that rewrites
 > commands. It is listed in this repo's lineup but does not gate anything dangerous.
@@ -182,9 +183,19 @@ Full list, allow-cases, and limitations: [shell-guard README](../plugins/shell-g
 /plugin install shell-guard@cc-goodies
 ```
 
-Then, in `~/.claude/settings.json`: keep `"defaultMode": "plan"` and a `permissions.deny`
-baseline like the one above. Both hook plugins need `jq` (`brew install jq`) — without it
-they fail open and you are back to Layers 0–1 only.
+Then symlink the advisory companion so it auto-loads in every session (Layer 4 — the
+judgment calls the hooks can't enforce):
+
+```sh
+ln -s ~/.claude/plugins/marketplaces/cc-goodies/rules/shell-safety.md \
+      ~/.claude/rules/shell-safety.md
+```
+
+Keep `"defaultMode": "plan"` in `~/.claude/settings.json`. Once shell-guard is installed
+you can **retire the shell half of `permissions.deny`** (it covers that ground); keep the
+deny list only for non-shell rules or as a belt-and-suspenders second layer. Both hook
+plugins need `jq` (`brew install jq`) — without it they fail open and you're back to plan
+mode + the deny list.
 
 Tune to taste:
 
@@ -235,7 +246,8 @@ git rebase main       # blocked by git-guard while on main
 ## See also
 
 - [git-guard](../plugins/git-guard/README.md) — protected-branch guard
-- [shell-guard](../plugins/shell-guard/README.md) — catastrophic-command guard
+- [shell-guard](../plugins/shell-guard/README.md) — dangerous-command guard
+- [rules/shell-safety.md](../rules/shell-safety.md) — the advisory companion (symlink into `~/.claude/rules/`)
 - [rtk-hook](../plugins/rtk-hook/README.md) — token optimizer (not a security control)
 - [CLAUDE.md](../CLAUDE.md) — development conventions and the hook input contract
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — the install ⇄ uninstall rule

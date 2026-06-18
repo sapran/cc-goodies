@@ -46,6 +46,9 @@ adds an install or setup step without its documented inverse is incomplete.
 ```
 .claude-plugin/marketplace.json   # registers every plugin (name, source, description)
 README.md                          # top-level marketplace overview
+CHANGELOG.md                       # release notes (Keep a Changelog)
+docs/shell-safety.md               # the layered shell-command defence manual
+rules/*.md                         # advisory rule files users symlink into ~/.claude/rules/
 plugins/<name>/
   .claude-plugin/plugin.json       # manifest; hooks declared INLINE here
   scripts/*.sh                     # hook/statusline scripts
