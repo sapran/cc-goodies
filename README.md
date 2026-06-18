@@ -10,6 +10,11 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 | **[shell-guard](plugins/shell-guard)** | Blocks a curated set of catastrophic shell commands (`rm -rf /` or `~`, `dd` to a disk, `mkfs`, fork bombs, `curl\|sh`) before they run. Defence in depth over the deny list; configurable. Cross-platform. |
 | **[rtk-hook](plugins/rtk-hook)** | Wires RTK (Rust Token Killer) as a managed `PreToolUse` hook to cut output tokens on routine Bash commands. No-ops without the `rtk` binary. Cross-platform. |
 
+> **Shell safety.** `git-guard` and `shell-guard`, together with your `settings.json`
+> deny list and plan mode, form a layered defense against dangerous shell commands. The
+> **[shell-safety manual](docs/shell-safety.md)** is the map: threat model, what each
+> layer catches and misses, and how to set it all up.
+
 ## Install
 
 ```text

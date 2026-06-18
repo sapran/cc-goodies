@@ -20,6 +20,10 @@ Claude Code plugins. Each lives under `plugins/<name>/` and is installable on it
 | `shell-guard` | hook + commands | cross-platform; PreToolUse/Bash guard that hard-blocks a curated catastrophic-command set (`rm -rf ~`, `dd` to device, `mkfs`, fork bombs, `curl\|sh`). Defence in depth over the `settings.json` deny list |
 | `rtk-hook` | hook + commands | cross-platform; wraps `rtk hook claude` as a PreToolUse/Bash hook (no-ops if `rtk` absent). `/rtk-hook-install` removes the hand-wired `settings.json` duplicate; `/rtk-hook-uninstall` offers to restore it |
 
+How `git-guard`, `shell-guard`, and the `settings.json` deny list compose into a layered
+shell-command defense is documented in [docs/shell-safety.md](docs/shell-safety.md) — keep
+it in sync when you change what a guard catches.
+
 ## Install ⇄ uninstall symmetry (required)
 
 Every plugin ships a documented, **symmetric install and uninstall path**. A change that
