@@ -18,6 +18,7 @@ Claude Code plugins. Each lives under `plugins/<name>/` and is installable on it
 | `voice-notify` | hooks | macOS `say`; Notification + Stop hooks |
 | `git-guard` | hook + commands | cross-platform; PreToolUse/Bash guard against writes to protected branches |
 | `shell-guard` | hook + commands | cross-platform; PreToolUse/Bash guard that hard-blocks a curated catastrophic-command set (`rm -rf ~`, `dd` to device, `mkfs`, fork bombs, `curl\|sh`). Defence in depth over the `settings.json` deny list |
+| `rtk-hook` | hook + commands | cross-platform; wraps `rtk hook claude` as a PreToolUse/Bash hook (no-ops if `rtk` absent). `/rtk-hook-install` removes the hand-wired `settings.json` duplicate; `/rtk-hook-uninstall` offers to restore it |
 
 ## Install ⇄ uninstall symmetry (required)
 

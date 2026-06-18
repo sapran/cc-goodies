@@ -8,6 +8,7 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 | **[statusline](plugins/statusline)** | An enriched two-line statusline: `user@host`, cwd, branch/worktree, task focus, model, effort, context % and rate-limit %. |
 | **[git-guard](plugins/git-guard)** | Blocks accidental commits/merges/pushes to protected branches (`main`/`master`) before they run. Selectable policies, configurable branches. Cross-platform. |
 | **[shell-guard](plugins/shell-guard)** | Blocks a curated set of catastrophic shell commands (`rm -rf /` or `~`, `dd` to a disk, `mkfs`, fork bombs, `curl\|sh`) before they run. Defence in depth over the deny list; configurable. Cross-platform. |
+| **[rtk-hook](plugins/rtk-hook)** | Wires RTK (Rust Token Killer) as a managed `PreToolUse` hook to cut output tokens on routine Bash commands. No-ops without the `rtk` binary. Cross-platform. |
 
 ## Install
 
@@ -17,10 +18,12 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 /plugin install statusline@cc-goodies
 /plugin install git-guard@cc-goodies
 /plugin install shell-guard@cc-goodies
+/plugin install rtk-hook@cc-goodies
 /statusline-install
+/rtk-hook-install
 ```
 
-Install any subset — they don't depend on each other. `/statusline-install` is a one-time wiring step, needed only if you installed the statusline.
+Install any subset — they don't depend on each other. `/statusline-install` and `/rtk-hook-install` are one-time wiring steps: the first is needed only if you installed the statusline; the second is an optional cleanup that removes a hand-wired `rtk hook claude` entry from `settings.json` (RTK itself is a separate prerequisite).
 
 ## Uninstall
 
@@ -30,9 +33,11 @@ Reverse of install — undo any wiring or config first, then remove the plugins 
 /statusline-uninstall
 /git-guard-uninstall
 /shell-guard-uninstall
+/rtk-hook-uninstall
 /plugin uninstall statusline@cc-goodies
 /plugin uninstall git-guard@cc-goodies
 /plugin uninstall shell-guard@cc-goodies
+/plugin uninstall rtk-hook@cc-goodies
 /plugin uninstall voice-notify@cc-goodies
 /plugin marketplace remove cc-goodies
 ```

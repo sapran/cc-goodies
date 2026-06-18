@@ -1,0 +1,25 @@
+{
+  "name": "rtk-hook",
+  "version": "0.1.0",
+  "description": "Wire the RTK (Rust Token Killer) token-optimizer as a managed PreToolUse hook on the Bash tool. No-ops gracefully when rtk isn't installed.",
+  "author": {
+    "name": "Volodymyr Styran",
+    "url": "https://github.com/sapran"
+  },
+  "license": "MIT",
+  "keywords": ["rtk", "hooks", "tokens", "optimization", "pretooluse"],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/rtk-hook.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
