@@ -13,6 +13,23 @@ Claude Code plugins. Each lives under `plugins/<name>/` and is installable on it
 | `voice-notify` | hooks | macOS `say`; Notification + Stop hooks |
 | `git-guard` | hook + commands | cross-platform; PreToolUse/Bash guard against writes to protected branches |
 
+## Install ⇄ uninstall symmetry (required)
+
+Every plugin ships a documented, **symmetric install and uninstall path**. A change that
+adds an install or setup step without its documented inverse is incomplete.
+
+- **Both directions documented:** the plugin README has an **Install** and an **Uninstall**
+  section, and the root `README.md` mirrors both.
+- **Every install verb has its inverse:** `marketplace add` ⇄ `marketplace remove`,
+  `/plugin install` ⇄ `/plugin uninstall`, `/<name>-install` ⇄ `/<name>-uninstall`.
+- **Durable external state needs a dedicated, ownership-guarded revert.** If install writes
+  durable state outside the plugin dir (`~/.claude/settings.json`, `~/.claude/<plugin>.conf`,
+  files under `$HOME`), ship a `/<name>-uninstall` that reverts exactly what install added,
+  backs up shared config before editing, verifies it still parses, and **refuses to touch
+  state the user configured themselves**. `statusline` and `git-guard` are the reference
+  implementations; pure-hook plugins like `voice-notify` rely on `/plugin uninstall` and say so.
+- **Ephemeral `$TMPDIR` caches are exempt** — they self-clear and need no teardown.
+
 ## Layout
 
 ```
@@ -44,8 +61,8 @@ Adding a plugin = create `plugins/<name>/` **and** add an entry to
 - **Commands** are markdown with YAML frontmatter (`description`, `allowed-tools`) whose
   body instructs Claude. Anything a plugin can't do declaratively (e.g. writing the
   `statusLine` key) is done via a command that reads, shows the diff, confirms, and
-  merges with `jq` — never clobbering unrelated keys. Ship a matching `*-uninstall`
-  command that reverses exactly what setup did and refuses to touch user-owned config.
+  merges with `jq` — never clobbering unrelated keys. Every such command has a matching
+  `/<name>-uninstall` (see **Install ⇄ uninstall symmetry** above).
 - **`jq` is the parsing dependency.** Statusline requires it; hooks that need it should
   no-op (fail open) with a one-line warning if it's missing, rather than blocking.
 
