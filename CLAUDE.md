@@ -17,6 +17,7 @@ Claude Code plugins. Each lives under `plugins/<name>/` and is installable on it
 | `statusline` | statusline + install command | macOS-oriented; needs `/statusline-install` to wire `statusLine` into settings (a plugin can't set that key itself) |
 | `voice-notify` | hooks | macOS `say`; Notification + Stop hooks |
 | `git-guard` | hook + commands | cross-platform; PreToolUse/Bash guard against writes to protected branches |
+| `shell-guard` | hook + commands | cross-platform; PreToolUse/Bash guard that hard-blocks a curated catastrophic-command set (`rm -rf ~`, `dd` to device, `mkfs`, fork bombs, `curl\|sh`). Defence in depth over the `settings.json` deny list |
 
 ## Install ⇄ uninstall symmetry (required)
 

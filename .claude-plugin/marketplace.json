@@ -5,7 +5,7 @@
     "url": "https://github.com/sapran"
   },
   "metadata": {
-    "description": "Developer-experience extras for Claude Code: spoken notifications, an enriched statusline, and a protected-branch guard.",
+    "description": "Developer-experience extras for Claude Code: spoken notifications, an enriched statusline, a protected-branch guard, and a dangerous-command guard.",
     "version": "0.1.0",
     "repository": "https://github.com/sapran/cc-goodies"
   },
@@ -24,6 +24,11 @@
       "name": "git-guard",
       "source": "./plugins/git-guard",
       "description": "Block accidental commits, merges and pushes to protected branches (main/master) before they run. Selectable policies, configurable branch lists."
+    },
+    {
+      "name": "shell-guard",
+      "source": "./plugins/shell-guard",
+      "description": "Block a curated set of catastrophic shell commands (rm -rf / or ~, dd to a disk device, mkfs/wipefs, fork bombs, curl|sh) before they run. Defence in depth over the static deny list; fail-open, configurable."
     }
   ]
 }

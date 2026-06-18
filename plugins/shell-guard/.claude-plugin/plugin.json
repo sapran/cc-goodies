@@ -1,0 +1,25 @@
+{
+  "name": "shell-guard",
+  "version": "0.1.0",
+  "description": "Block a curated set of catastrophic shell commands (rm -rf / or ~, dd to a disk device, mkfs/wipefs, fork bombs, curl|sh) before they run. Defence in depth over the static deny list; fail-open, configurable.",
+  "author": {
+    "name": "Volodymyr Styran",
+    "url": "https://github.com/sapran"
+  },
+  "license": "MIT",
+  "keywords": ["shell", "hooks", "safety", "dangerous-commands", "pretooluse"],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/shell-guard.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

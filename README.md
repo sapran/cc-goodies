@@ -7,6 +7,7 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 | **[voice-notify](plugins/voice-notify)** | Speaks a short, rotating, first-person cue (macOS `say`) when Claude needs your attention or finishes a turn. |
 | **[statusline](plugins/statusline)** | An enriched two-line statusline: `user@host`, cwd, branch/worktree, task focus, model, effort, context % and rate-limit %. |
 | **[git-guard](plugins/git-guard)** | Blocks accidental commits/merges/pushes to protected branches (`main`/`master`) before they run. Selectable policies, configurable branches. Cross-platform. |
+| **[shell-guard](plugins/shell-guard)** | Blocks a curated set of catastrophic shell commands (`rm -rf /` or `~`, `dd` to a disk, `mkfs`, fork bombs, `curl\|sh`) before they run. Defence in depth over the deny list; configurable. Cross-platform. |
 
 ## Install
 
@@ -15,6 +16,7 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 /plugin install voice-notify@cc-goodies
 /plugin install statusline@cc-goodies
 /plugin install git-guard@cc-goodies
+/plugin install shell-guard@cc-goodies
 /statusline-install
 ```
 
@@ -27,8 +29,10 @@ Reverse of install — undo any wiring or config first, then remove the plugins 
 ```text
 /statusline-uninstall
 /git-guard-uninstall
+/shell-guard-uninstall
 /plugin uninstall statusline@cc-goodies
 /plugin uninstall git-guard@cc-goodies
+/plugin uninstall shell-guard@cc-goodies
 /plugin uninstall voice-notify@cc-goodies
 /plugin marketplace remove cc-goodies
 ```
