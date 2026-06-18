@@ -64,9 +64,11 @@ state and writes the file for you.
 ## Uninstall
 
 ```text
-/git-guard-uninstall                     # removes ~/.claude/git-guard.conf (asks first)
-/plugin uninstall git-guard@cc-goodies   # removes the plugin and its hook
+/git-guard-uninstall
+/plugin uninstall git-guard@cc-goodies
 ```
+
+`/git-guard-uninstall` deletes the `~/.claude/git-guard.conf` it created (after confirmation); `/plugin uninstall` then removes the plugin and its hook.
 
 To **pause** without removing, set `GIT_GUARD_DISABLE=1` (via `/git-guard`, or as a
 line in `~/.claude/git-guard.conf`): the guard no-ops but stays installed.

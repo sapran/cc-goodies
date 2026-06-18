@@ -12,25 +12,25 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 
 ```text
 /plugin marketplace add sapran/cc-goodies
-/plugin install voice-notify@cc-goodies     # the talking one
-/plugin install statusline@cc-goodies        # the statusline
-/plugin install git-guard@cc-goodies         # the branch guard
-/statusline-install                             # one-time wiring (statusline only)
+/plugin install voice-notify@cc-goodies
+/plugin install statusline@cc-goodies
+/plugin install git-guard@cc-goodies
+/statusline-install
 ```
 
-Install any subset — they don't depend on each other.
+Install any subset — they don't depend on each other. `/statusline-install` is a one-time wiring step, needed only if you installed the statusline.
 
 ## Uninstall
 
 Reverse of install — undo any wiring or config first, then remove the plugins and the marketplace:
 
 ```text
-/statusline-uninstall                          # revert the statusLine entry + delete the installed script (statusline)
-/git-guard-uninstall                           # remove ~/.claude/git-guard.conf (git-guard) — /git-guard just pauses it
+/statusline-uninstall
+/git-guard-uninstall
 /plugin uninstall statusline@cc-goodies
 /plugin uninstall git-guard@cc-goodies
 /plugin uninstall voice-notify@cc-goodies
-/plugin marketplace remove cc-goodies          # drop the marketplace entry
+/plugin marketplace remove cc-goodies
 ```
 
 Each plugin's dedicated uninstall only undoes what its install added and refuses to touch anything you configured yourself. voice-notify writes nothing outside its plugin directory, so `/plugin uninstall` removes it completely. Run `/hooks` or restart afterwards.

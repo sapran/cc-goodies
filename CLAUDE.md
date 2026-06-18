@@ -120,7 +120,7 @@ across every policy, refspec form, compound command, and false-positive case.
 ## Common commands
 
 ```bash
-claude plugins validate plugins/<name>        # validate a plugin's structure
-/plugin marketplace add sapran/cc-goodies     # add this marketplace
-/plugin install <name>@cc-goodies             # install a plugin
+claude plugins validate plugins/<name>
+/plugin marketplace add sapran/cc-goodies
+/plugin install <name>@cc-goodies
 ```

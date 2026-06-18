@@ -32,8 +32,8 @@ Run `/hooks` or restart for it to take effect.
 ## Uninstall
 
 ```text
-/statusline-uninstall                       # reverts the statusLine entry + deletes the installed script (with confirmation)
-/plugin uninstall statusline@cc-goodies     # removes the plugin itself
+/statusline-uninstall
+/plugin uninstall statusline@cc-goodies
 ```
 
 `/statusline-uninstall` only undoes what `/statusline-install` added — it **refuses to touch a statusline you configured yourself**. (To revert by hand instead: remove the `statusLine` key from `~/.claude/settings.json` and delete `~/.claude/team-statusline.sh`.)
