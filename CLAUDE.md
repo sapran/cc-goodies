@@ -17,7 +17,7 @@ Claude Code plugins. Each lives under `plugins/<name>/` and is installable on it
 | `statusline` | statusline + install command | macOS-oriented; needs `/statusline-install` to wire `statusLine` into settings (a plugin can't set that key itself) |
 | `voice-notify` | hooks | macOS `say`; Notification + Stop hooks |
 | `git-guard` | hook + commands | cross-platform; PreToolUse/Bash guard against writes to protected branches |
-| `shell-guard` | hook + commands | cross-platform; PreToolUse/Bash guard that hard-blocks a curated catastrophic-command set (`rm -rf ~`, `dd` to device, `mkfs`, fork bombs, `curl\|sh`). Defence in depth over the `settings.json` deny list |
+| `shell-guard` | hook + commands | cross-platform; PreToolUse/Bash guard that hard-blocks a curated dangerous-command set (`rm -rf ~`, `dd` to device, `mkfs`, fork bombs, `curl\|sh`, `: >`/truncate, `chmod 777`, `eval`, `sudo`, reboot/shutdown). Designed to cover a typical `settings.json` shell deny list; `sudo` default-on (`SHELL_GUARD_ALLOW_SUDO=1` to opt out) |
 | `rtk-hook` | hook + commands | cross-platform; wraps `rtk hook claude` as a PreToolUse/Bash hook (no-ops if `rtk` absent). `/rtk-hook-install` removes the hand-wired `settings.json` duplicate; `/rtk-hook-uninstall` offers to restore it |
 
 How `git-guard`, `shell-guard`, and the `settings.json` deny list compose into a layered

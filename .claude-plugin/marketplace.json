@@ -28,7 +28,7 @@
     {
       "name": "shell-guard",
       "source": "./plugins/shell-guard",
-      "description": "Block a curated set of catastrophic shell commands (rm -rf / or ~, dd to a disk device, mkfs/wipefs, fork bombs, curl|sh) before they run. Defence in depth over the static deny list; fail-open, configurable."
+      "description": "Block a curated set of dangerous shell commands (rm -rf / or ~, dd to a disk, mkfs, fork bombs, curl|sh, file truncation, chmod 777, eval, sudo, reboot/shutdown) before they run. Covers a typical shell deny list; fail-open, configurable."
     },
     {
       "name": "rtk-hook",

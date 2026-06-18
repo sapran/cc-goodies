@@ -10,16 +10,19 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 ### Added
 
 - **`shell-guard` plugin** — a `PreToolUse`/`Bash` hook that hard-blocks (exit 2) a
-  curated set of catastrophic shell commands before they run: recursive deletes of `/`,
+  curated set of dangerous shell commands before they run: recursive deletes of `/`,
   `$HOME`/`~`, or a top-level system directory (and any `--no-preserve-root`); `dd` onto
   a `/dev` device; `mkfs`/`wipefs`/`newfs`; destructive `diskutil`; redirects onto a raw
-  disk device; fork bombs; and network downloads piped into a shell (`curl|sh`). Defence
-  in depth over the static `permissions.deny` list — it normalizes flags/spacing and
-  resolves the target, catching obfuscated variants string-matching misses, while
-  deliberately allowing ordinary work (`rm -rf ./build`, `dd … of=file`, `curl|jq`).
-  Configurable via `~/.claude/shell-guard.conf` (`SHELL_GUARD_DISABLE`,
-  `SHELL_GUARD_EXTRA_PATTERNS`) through `/shell-guard`, with a matching
-  `/shell-guard-uninstall`. Fails open if `jq` is missing.
+  disk device; fork bombs; network downloads piped into a shell (`curl|sh`); truncating a
+  file to empty (`: >`, `truncate -s0`); `chmod 777`; `eval`; `sudo` (default-on, opt out
+  with `SHELL_GUARD_ALLOW_SUDO=1`); and system halt/reboot
+  (`reboot`/`shutdown`/`halt`/`poweroff`/`init 0|6`). Designed to cover — and improve on —
+  a typical shell `permissions.deny` list: it normalizes flags/spacing and resolves the
+  target, catching obfuscated variants string-matching misses, while deliberately allowing
+  ordinary work (`rm -rf ./build`, `dd … of=file`, `curl|jq`, `git init`, plain `> file`
+  redirects, `chmod 755`). Configurable via `~/.claude/shell-guard.conf`
+  (`SHELL_GUARD_DISABLE`, `SHELL_GUARD_ALLOW_SUDO`, `SHELL_GUARD_EXTRA_PATTERNS`) through
+  `/shell-guard`, with a matching `/shell-guard-uninstall`. Fails open if `jq` is missing.
 - **`rtk-hook` plugin** — wires RTK (Rust Token Killer) as a managed `PreToolUse`/`Bash`
   hook instead of a hand-wired `settings.json` entry. The wrapper execs `rtk hook claude`
   when `rtk` is on `PATH` and no-ops (exit 0) otherwise, so it's safe to install without

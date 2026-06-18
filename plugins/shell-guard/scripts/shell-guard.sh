@@ -4,22 +4,24 @@
 #
 # Wired as a PreToolUse hook on the Bash tool. The tool call's JSON arrives on
 # stdin; we read .tool_input.command and .cwd, split the command into segments,
-# and block (exit 2) when a segment matches a high-confidence destructive
-# pattern: wiping `/` or `$HOME`, recursively deleting a top-level system dir,
-# writing onto a raw disk device, mkfs/wipefs, a fork bomb, or piping a network
-# download straight into a shell. Everything else passes straight through.
+# and block (exit 2) when a segment matches a high-confidence dangerous pattern:
+# wiping `/` or `$HOME`, recursively deleting a top-level system dir, writing
+# onto a raw disk device, mkfs/wipefs, a fork bomb, piping a network download
+# into a shell, truncating a file to empty (`: >`/`truncate -s0`), `chmod 777`,
+# `eval`, `sudo`, and system halt/reboot. Everything else passes straight through.
 #
-# This is defence in depth ON TOP of the static permissions.deny list in
-# settings.json. By normalising flags/spacing and resolving the delete target it
-# catches obfuscated variants (`rm -fr /`, `rm --recursive --force ~`) that
-# exact-string matching misses. It is a convenience guard, not a sandbox — keep
-# real OS-level protections too. It deliberately does NOT block ordinary work
-# like `rm -rf ./build` or `rm -rf node_modules`.
+# Designed to fully cover — and improve on — a typical settings.json shell
+# deny list: by normalising flags/spacing and resolving the target it catches
+# obfuscated variants (`rm -fr /`, `rm --recursive --force ~`) that exact-string
+# matching misses. It is a convenience guard, not a sandbox — keep real OS-level
+# protections too. It deliberately does NOT block ordinary work like
+# `rm -rf ./build` or `rm -rf node_modules`.
 #
 # Config, lowest to highest precedence:
 #   built-in defaults -> ~/.claude/shell-guard.conf (KEY=VALUE) -> environment
 #
 #   SHELL_GUARD_DISABLE=1            # turn the guard off without uninstalling
+#   SHELL_GUARD_ALLOW_SUDO=1        # permit `sudo` (blocked by default)
 #   SHELL_GUARD_EXTRA_PATTERNS="..." # extra ERE block patterns, ;- or newline-separated
 #
 # Requires jq to parse the hook JSON. If jq is missing the guard cannot read the
@@ -68,6 +70,8 @@ conf_get() {
 DISABLE="${SHELL_GUARD_DISABLE:-$(conf_get SHELL_GUARD_DISABLE)}"
 [ -n "${DISABLE:-}" ] && [ "$DISABLE" != "0" ] && exit 0   # escape hatch
 EXTRA="${SHELL_GUARD_EXTRA_PATTERNS:-$(conf_get SHELL_GUARD_EXTRA_PATTERNS)}"
+# `sudo` is blocked by default (privilege escalation); opt out to permit it.
+ALLOW_SUDO="${SHELL_GUARD_ALLOW_SUDO:-$(conf_get SHELL_GUARD_ALLOW_SUDO)}"
 
 # Regexes kept in variables so the `>` / `(` inside them never confuse the [[ ]]
 # parser, and so they read as plain ERE.
@@ -75,6 +79,9 @@ NET_RE='(curl|wget|fetch)[^|]*\|[[:space:]]*(sudo[[:space:]]+)?(sh|bash|zsh|dash
 NETSUB_RE='(sh|bash|zsh|dash)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*<\((curl|wget|fetch)'
 DEV_RE='>[[:space:]]*/dev/(disk|rdisk|sd|hd|nvme|vd)'
 FORK_RE='([A-Za-z_:][A-Za-z0-9_:]*)\(\)[[:space:]]*\{(.*)\}'
+# The `: >` truncate-to-empty idiom: a segment that starts with `:` then a
+# single `>` redirect. (A bare `> file` is an ordinary redirect — not matched.)
+TRUNC_RE='^[[:space:]]*:[[:space:]]*>([^>]|$)'
 
 # --- Helpers ----------------------------------------------------------------
 deny() {
@@ -120,6 +127,9 @@ evaluate_segment() {
   if [[ "$seg" =~ $DEV_RE ]]; then
     deny "redirect onto a raw disk device"; return 2
   fi
+  if [[ "$seg" =~ $TRUNC_RE ]]; then
+    deny "truncate a file to empty (\`: >\`)"; return 2
+  fi
   # Fork bomb: a function that pipes & backgrounds a call to itself.
   if [[ "$seg" =~ $FORK_RE ]]; then
     fn="${BASH_REMATCH[1]}"; body="${BASH_REMATCH[2]}"
@@ -143,9 +153,17 @@ EOF2
   [ $# -gt 0 ] || return 0
 
   # Walk past benign prefixes / shell keywords to the real command word.
+  # `sudo` is blocked outright by default (privilege escalation); with
+  # SHELL_GUARD_ALLOW_SUDO set it's treated as a prefix so the wrapped command
+  # is still inspected (e.g. `sudo rm -rf /` is caught by the rm check below).
   while [ $# -gt 0 ]; do
     case "$1" in
-      *=*|sudo|command|exec|builtin|nice|nohup|time|env|then|do|else) shift ;;
+      sudo)
+        if [ -z "${ALLOW_SUDO:-}" ] || [ "$ALLOW_SUDO" = "0" ]; then
+          deny "sudo — privilege escalation (set SHELL_GUARD_ALLOW_SUDO=1 to permit)"; return 2
+        fi
+        shift ;;
+      *=*|command|exec|builtin|nice|nohup|time|env|then|do|else) shift ;;
       *) break ;;
     esac
   done
@@ -186,16 +204,39 @@ EOF2
       esac
       ;;
     chmod|chown)
-      has_R=0; cata=0
+      has_R=0; cata=0; perm777=0
       for a in "$@"; do
         case "$a" in
+          777|0777)    perm777=1 ;;
           --recursive) has_R=1 ;;
           --*) : ;;
           -*) case "$a" in *R*) has_R=1 ;; esac ;;
           *)  is_cata_target "$a" && cata=1 ;;
         esac
       done
+      [ "$c" = chmod ] && [ "$perm777" = 1 ] && { deny "chmod 777 — world-writable permissions"; return 2; }
       [ "$has_R" = 1 ] && [ "$cata" = 1 ] && { deny "recursive $c of a protected path"; return 2; }
+      ;;
+    reboot|shutdown|halt|poweroff)
+      deny "system halt/reboot ($c)"; return 2
+      ;;
+    init|telinit)
+      case "${1:-}" in 0|6) deny "system halt/reboot ($c $1)"; return 2 ;; esac
+      ;;
+    eval)
+      deny "eval — arbitrary code execution"; return 2
+      ;;
+    truncate)
+      # `truncate -s 0` / `-s0` / `--size=0` zeroes a file.
+      sflag=""
+      for a in "$@"; do
+        case "$a" in
+          -s0|-s0K|-s0M|--size=0|--size=0K|--size=0M) deny "truncate a file to zero"; return 2 ;;
+          -s|--size) sflag=1 ;;
+          0|0K|0M|0KB) [ -n "$sflag" ] && { deny "truncate a file to zero"; return 2; }; sflag="" ;;
+          *) sflag="" ;;
+        esac
+      done
       ;;
   esac
   return 0

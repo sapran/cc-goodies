@@ -40,7 +40,7 @@ one layer is covered by another.
 | **0. Plan mode** | Human confirmation before any tool runs | Harness (`defaultMode`) | closed (asks) | *everything*, incl. the long tail | nothing — but relies on you reading the command |
 | **1. Deny list** | Exact string match on the command | Harness (`permissions.deny`) | closed (blocks) | a fixed, enumerated set | re-ordered flags, quoting, variables, anything not listed |
 | **2. git-guard** | Parses the git verb + resolves the branch | Plugin PreToolUse hook | **open** (allows if `jq` missing) | commit/merge/pull/rebase/push onto protected branches | exotic quoting; non-git destructive ops |
-| **3. shell-guard** | Normalizes flags + resolves the target | Plugin PreToolUse hook | **open** (allows if `jq` missing) | a curated catastrophic-command set | anything outside that set; heavy obfuscation |
+| **3. shell-guard** | Normalizes flags + resolves the target | Plugin PreToolUse hook | **open** (allows if `jq` missing) | a curated dangerous-command set (covers a typical shell deny list) | anything outside that set; heavy obfuscation |
 
 > `rtk-hook` is **not** a security layer — it is a token optimizer that rewrites
 > commands. It is listed in this repo's lineup but does not gate anything dangerous.
@@ -99,6 +99,13 @@ A reasonable baseline:
 `rm -r --force /`, or `rm -rf $HOME`. That gap is exactly what **shell-guard** (Layer 3)
 closes by normalizing the flags and resolving the target instead of matching a string.
 
+> **You can retire the shell half of this list once shell-guard is installed.**
+> shell-guard (Layer 3) is designed to cover every pattern in the baseline above —
+> `rm -rf`, `sudo`, `chmod 777`, `curl|sh`, `wget|sh`, `eval`, `: >`, `mkfs`, `dd`,
+> `reboot`, `shutdown` — and more, with flag/spacing normalization the deny list can't
+> do. Keep `permissions.deny` only for non-shell rules or as a belt-and-suspenders second
+> layer; the two are independent and a deny match still wins.
+
 ---
 
 ### Layer 2 — git-guard (protected branches)
@@ -127,12 +134,12 @@ Full detail and the override paths: [git-guard README](../plugins/git-guard/READ
 
 ---
 
-### Layer 3 — shell-guard (catastrophic commands)
+### Layer 3 — shell-guard (dangerous commands)
 
-A `PreToolUse`/`Bash` hook that hard-blocks (exit 2) a **small, curated set** of
-catastrophic commands. Unlike Layer 1 it normalizes flags/spacing and resolves the target,
-catching the obfuscated variants the string list misses. It splits compound commands on
-`&&`, `||`, `;` and newlines and judges each piece, so `git pull && rm -rf /` is caught.
+A `PreToolUse`/`Bash` hook that hard-blocks (exit 2) a **curated set** of dangerous
+commands. Unlike Layer 1 it normalizes flags/spacing and resolves the target, catching the
+obfuscated variants the string list misses. It splits compound commands on `&&`, `||`, `;`
+and newlines and judges each piece, so `git pull && rm -rf /` is caught.
 
 **Blocks:**
 
@@ -146,7 +153,12 @@ catching the obfuscated variants the string list misses. It splits compound comm
   `/dev/null`/`zero`/tty);
 - fork bombs (a function that pipes and backgrounds a call to itself);
 - a network download piped into a shell (`curl`/`wget`/`fetch` → `sh`/`bash`/`zsh`,
-  including via `sudo` and `bash <(curl …)`).
+  including via `sudo` and `bash <(curl …)`);
+- truncate a file to empty — the `: > file` idiom and `truncate -s 0`/`--size=0` (but not
+  a plain `> file` redirect or `: >>` append);
+- `chmod 777`/`0777` (world-writable); `eval` (arbitrary code execution);
+- `sudo` — blocked by default (opt out with `SHELL_GUARD_ALLOW_SUDO=1`);
+- system halt/reboot — `reboot`, `shutdown`, `halt`, `poweroff`, `init 0`/`init 6`.
 
 **Deliberately allows** (so it doesn't break normal work): `rm -rf ./build`,
 `rm -rf node_modules`, deep paths under a system dir (`/usr/local/lib/...`),
@@ -154,7 +166,8 @@ catching the obfuscated variants the string list misses. It splits compound comm
 `echo "rm -rf /"`.
 
 - **Config:** env → `~/.claude/shell-guard.conf` → default. `SHELL_GUARD_DISABLE=1`
-  pauses it; `SHELL_GUARD_EXTRA_PATTERNS` adds your own ERE block patterns.
+  pauses it; `SHELL_GUARD_ALLOW_SUDO=1` permits `sudo`; `SHELL_GUARD_EXTRA_PATTERNS` adds
+  your own ERE block patterns.
 - **Fails open** if `jq` is missing.
 
 Full list, allow-cases, and limitations: [shell-guard README](../plugins/shell-guard/README.md).
