@@ -26,11 +26,32 @@ Set these as environment variables (shell profile, or Claude Code's `env` settin
 | `CLAUDE_VOICE` | Voice to use. Default `Matilda (Premium)`; falls back to the system default if not installed. List options with `say -v '?'`. |
 | `CLAUDE_VOICE_NOTIFY=off` | Mute without uninstalling. |
 
-## Requirements
+## Prerequisites
 
-- **macOS** — `say` is built in.
-- **`jq`** *(recommended)* — used to speak the *specific* reason on notifications. Without it you'll still hear a generic "I need your attention." `brew install jq`.
-- *(optional)* a premium voice such as **Matilda (Premium)**: System Settings → Accessibility → Spoken Content → System Voice → Manage Voices.
+The voice hooks need:
+
+- **macOS** — the hooks call the built-in `say` command. On any non-macOS machine the script no-ops cleanly (silent, no error), so it's safe to install team-wide.
+- **A speech voice** — macOS ships with **Samantha** (en_US, female) out of the box, so the hooks work with **no download**. If the configured voice isn't installed, the hooks fall back to your system default voice. For higher quality, install an Enhanced/Premium voice (below).
+- **`jq`** *(recommended)* — used to speak the *specific* reason on a notification (e.g. "…to use Bash"). Without it you still get a generic "I need your attention." Install with `brew install jq`.
+
+`say` itself needs no installation.
+
+## Choosing / installing a voice
+
+**Samantha** — built into macOS, no download. Confirm it's there, test it, and point voice-notify at it:
+
+```bash
+say -v '?' | grep Samantha       # confirm it's installed (it is, on stock macOS)
+say -v Samantha "Hello"          # hear it
+export CLAUDE_VOICE="Samantha"   # use it (put in your shell profile or Claude Code `env`)
+```
+
+**Higher-quality voices** (Enhanced / Premium — larger downloads):
+
+1. **System Settings → Accessibility → Spoken Content**
+2. Open the **System Voice** dropdown → **Manage Voices…**
+3. Expand **English**, tick a voice (e.g. *Samantha (Enhanced)*, *Matilda (Premium)*) — macOS downloads it.
+4. Set `CLAUDE_VOICE` to the **exact** name from `say -v '?'`, parentheses included — e.g. `export CLAUDE_VOICE="Samantha (Enhanced)"`.
 
 ## Editing the phrases
 

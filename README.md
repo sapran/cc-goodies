@@ -22,7 +22,7 @@ Install either, both, or neither — they don't depend on each other.
 
 - **macOS** — voice-notify uses the built-in `say`; the statusline uses a few BSD tools.
 - **`jq`** — `brew install jq` (statusline, and the notification message transform).
-- *(optional)* a premium voice such as **Matilda (Premium)**: System Settings → Accessibility → Spoken Content → System Voice → Manage Voices. Without it, voice-notify falls back to your default system voice.
+- **A voice (for voice-notify)** — macOS includes **Samantha** (en_US) out of the box, so it works with no download (`CLAUDE_VOICE="Samantha"`). For higher quality, install an Enhanced/Premium voice via System Settings → Accessibility → Spoken Content → Manage Voices. See [voice-notify's README](plugins/voice-notify#choosing--installing-a-voice) for the steps.
 
 See each plugin's README for configuration.
 
