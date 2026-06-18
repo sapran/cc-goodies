@@ -15,7 +15,7 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 /plugin install voice-notify@cc-goodies     # the talking one
 /plugin install statusline@cc-goodies        # the statusline
 /plugin install git-guard@cc-goodies         # the branch guard
-/statusline-setup                             # one-time wiring (statusline only)
+/statusline-install                             # one-time wiring (statusline only)
 ```
 
 Install either, both, or neither — they don't depend on each other.

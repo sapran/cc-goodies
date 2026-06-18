@@ -3,7 +3,7 @@ description: Remove the cc-goodies statusline — deletes the installed script a
 allowed-tools: Bash(jq:*), Bash(rm:*), Bash(cp:*), Bash(test:*), Bash(command -v jq), Read, Edit
 ---
 
-You are reverting what `/statusline-setup` did for the current user. Be careful and idempotent, and **never remove a statusline the user configured themselves**.
+You are reverting what `/statusline-install` did for the current user. Be careful and idempotent, and **never remove a statusline the user configured themselves**.
 
 1. **Read** `$HOME/.claude/settings.json`. If it has no `statusLine` key, report "no statusLine configured — nothing to remove" and jump to step 4.
 

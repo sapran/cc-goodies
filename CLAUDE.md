@@ -9,7 +9,7 @@ Claude Code plugins. Each lives under `plugins/<name>/` and is installable on it
 
 | Plugin | Kind | Notes |
 |--------|------|-------|
-| `statusline` | statusline + install command | macOS-oriented; needs `/statusline-setup` to wire `statusLine` into settings (a plugin can't set that key itself) |
+| `statusline` | statusline + install command | macOS-oriented; needs `/statusline-install` to wire `statusLine` into settings (a plugin can't set that key itself) |
 | `voice-notify` | hooks | macOS `say`; Notification + Stop hooks |
 | `git-guard` | hook + commands | cross-platform; PreToolUse/Bash guard against writes to protected branches |
 

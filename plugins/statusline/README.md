@@ -16,10 +16,10 @@ Tuned for speed: a single `jq` parse, bounded transcript reads, and short-lived 
 
 ```text
 /plugin install statusline@cc-goodies
-/statusline-setup
+/statusline-install
 ```
 
-`/statusline-setup` copies the script to `~/.claude/team-statusline.sh`, then — after showing you the change and confirming — adds the `statusLine` entry to your `~/.claude/settings.json` (existing settings preserved). A plugin can't set `statusLine` automatically, hence the one-time command.
+`/statusline-install` copies the script to `~/.claude/team-statusline.sh`, then — after showing you the change and confirming — adds the `statusLine` entry to your `~/.claude/settings.json` (existing settings preserved). A plugin can't set `statusLine` automatically, hence the one-time command.
 
 Run `/hooks` or restart for it to take effect.
 
@@ -36,4 +36,4 @@ Run `/hooks` or restart for it to take effect.
 /plugin uninstall statusline@cc-goodies     # removes the plugin itself
 ```
 
-`/statusline-uninstall` only undoes what `/statusline-setup` added — it **refuses to touch a statusline you configured yourself**. (To revert by hand instead: remove the `statusLine` key from `~/.claude/settings.json` and delete `~/.claude/team-statusline.sh`.)
+`/statusline-uninstall` only undoes what `/statusline-install` added — it **refuses to touch a statusline you configured yourself**. (To revert by hand instead: remove the `statusLine` key from `~/.claude/settings.json` and delete `~/.claude/team-statusline.sh`.)
