@@ -21,9 +21,9 @@
 #   GIT_GUARD_DEV_BRANCHES="develop"
 #   GIT_GUARD_DISABLE=1        # turn the guard off without uninstalling
 #
-# "commit -> main" also covers `git merge` while on a protected branch (a merge
-# mutates the current branch exactly like a commit). `git pull`/`git rebase` are
-# NOT yet guarded — see README.
+# "commit -> main" also covers `git merge`, `git pull` and `git rebase` while on
+# a protected branch: each mutates the current branch exactly like a commit, so
+# they are all treated as a local write and gated by the same policy.
 #
 # Requires jq (used to parse the hook JSON). If jq is missing the guard cannot
 # read the command, so it no-ops with a one-line warning rather than blocking
@@ -136,9 +136,9 @@ evaluate_segment() {
   [ -n "$verb" ] || return 0
 
   case "$verb" in
-    commit|merge) action="localwrite" ;;
-    push)         action="push" ;;
-    *)            return 0 ;;
+    commit|merge|pull|rebase) action="localwrite" ;;
+    push)                     action="push" ;;
+    *)                        return 0 ;;
   esac
 
   # Resolve the target branch + its class.

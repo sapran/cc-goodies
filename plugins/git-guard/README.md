@@ -1,9 +1,9 @@
 # git-guard
 
 A `PreToolUse` hook that **blocks accidental writes to protected branches before
-they run**. When Claude tries a `git commit`, `git merge`, or `git push` that the
-active policy forbids, the command is denied (exit 2) and Claude is told why —
-instead of finding out after `main` already moved.
+they run**. When Claude tries a `git commit`, `git merge`, `git pull`, `git rebase`,
+or `git push` that the active policy forbids, the command is denied (exit 2) and
+Claude is told why — instead of finding out after `main` already moved.
 
 It only ever gates **Claude's Bash tool**. You can still run any command yourself
 in a terminal.
@@ -25,8 +25,8 @@ Pick how strict you want it with `GIT_GUARD_POLICY` (default **2**):
 - **Policy 3** — local-only on `develop`: no pushing **anywhere**, and no commits to
   `main`. Commits to `develop` and feature branches are still allowed.
 
-"Commit → main" also covers `git merge` while on a protected branch, since a merge
-mutates the current branch exactly like a commit.
+"Commit → main" also covers `git merge`, `git pull`, and `git rebase` while on a
+protected branch, since each mutates the current branch exactly like a commit.
 
 ## Install
 
@@ -81,7 +81,8 @@ Target branches are resolved properly, not by substring matching:
   `git push origin HEAD:refs/heads/main` → all resolve to `main`.
 - `git push --all` / `--mirror` → treated as touching protected branches.
 - `git push origin :main` (delete remote `main`) → blocked.
-- `git commit` / `git merge` → judged against the **current** branch.
+- `git commit` / `git merge` / `git pull` / `git rebase` → judged against the
+  **current** branch (each mutates it like a commit).
 - `git -C <path> …` → the branch is resolved in `<path>`, not the cwd.
 - Compound commands are split on `&&`, `||`, `;` and judged piece by piece, so
   `git add . && git push origin main` is caught.
@@ -100,8 +101,6 @@ Target branches are resolved properly, not by substring matching:
 - **Best-effort shell parsing.** Exotic quoting or aliases that hide a `git` verb can
   slip through — this is a convenience guard, not a server-side branch protection.
   Pair it with real protections (GitHub branch rules) for anything that matters.
-- **`git pull` and `git rebase` are not guarded yet.** A `pull` on `main` does mutate
-  it; that case is on the roadmap.
 - **Requires `jq`** to parse the hook input. If `jq` is missing the guard prints a
   one-line warning and **allows** the command (it fails open rather than blocking
   every Bash call). `brew install jq` to enable it.
