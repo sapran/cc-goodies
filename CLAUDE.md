@@ -7,6 +7,11 @@ Guidance for Claude Code when developing in this repository.
 `cc-goodies` is a **plugin marketplace** — a small collection of independent, opt-in
 Claude Code plugins. Each lives under `plugins/<name>/` and is installable on its own.
 
+> **Dev source vs. installed copy.** This repository is the development source — edit it here.
+> The copy under `~/.claude/plugins/marketplaces/<marketplace>/` is the *installed* clone that
+> `/plugin marketplace add` manages and **overwrites on update**; never edit that one. `git fetch`
+> before working — the dev clone can lag what's already published.
+
 | Plugin | Kind | Notes |
 |--------|------|-------|
 | `statusline` | statusline + install command | macOS-oriented; needs `/statusline-install` to wire `statusLine` into settings (a plugin can't set that key itself) |
