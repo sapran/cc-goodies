@@ -1,0 +1,11 @@
+{
+  "name": "session-finalise",
+  "version": "0.1.0",
+  "description": "End-of-session housekeeping: an auto-activating checklist (durable memory, handoff, tracker updates, commit/stash, cleanup) plus a /session-finalise command, confirming every irreversible step.",
+  "author": {
+    "name": "Volodymyr Styran",
+    "url": "https://github.com/sapran"
+  },
+  "license": "MIT",
+  "keywords": ["session", "finalise", "finalize", "housekeeping", "wrap-up", "cleanup", "handoff", "memory"]
+}

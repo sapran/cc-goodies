@@ -9,6 +9,7 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 | **[git-guard](plugins/git-guard)** | Blocks accidental commits/merges/pushes to protected branches (`main`/`master`) before they run. Selectable policies, configurable branches. Cross-platform. |
 | **[shell-guard](plugins/shell-guard)** | Blocks a curated set of catastrophic shell commands (`rm -rf /` or `~`, `dd` to a disk, `mkfs`, fork bombs, `curl\|sh`) before they run. Defence in depth over the deny list; configurable. Cross-platform. |
 | **[rtk-hook](plugins/rtk-hook)** | Wires RTK (Rust Token Killer) as a managed `PreToolUse` hook to cut output tokens on routine Bash commands. No-ops without the `rtk` binary. Cross-platform. |
+| **[session-finalise](plugins/session-finalise)** | An end-of-session checklist that preserves work, then cleans up: commit/stash, durable memory, handoff, tracker updates, scratch-file and worktree removal — confirming every irreversible step. Auto-activates on wrap-up, or run `/session-finalise`. Cross-platform. |
 
 > **Shell safety.** `git-guard` and `shell-guard`, together with your `settings.json`
 > deny list and plan mode, form a layered defense against dangerous shell commands. The
@@ -27,6 +28,7 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 /plugin install git-guard@cc-goodies
 /plugin install shell-guard@cc-goodies
 /plugin install rtk-hook@cc-goodies
+/plugin install session-finalise@cc-goodies
 /statusline-install
 /rtk-hook-install
 ```
@@ -46,11 +48,12 @@ Reverse of install — undo any wiring or config first, then remove the plugins 
 /plugin uninstall git-guard@cc-goodies
 /plugin uninstall shell-guard@cc-goodies
 /plugin uninstall rtk-hook@cc-goodies
+/plugin uninstall session-finalise@cc-goodies
 /plugin uninstall voice-notify@cc-goodies
 /plugin marketplace remove cc-goodies
 ```
 
-Each plugin's dedicated uninstall only undoes what its install added and refuses to touch anything you configured yourself. voice-notify writes nothing outside its plugin directory, so `/plugin uninstall` removes it completely. Run `/hooks` or restart afterwards.
+Each plugin's dedicated uninstall only undoes what its install added and refuses to touch anything you configured yourself. voice-notify and session-finalise write nothing outside their plugin directories, so `/plugin uninstall` removes them completely. Run `/hooks` or restart afterwards.
 
 ## Requirements
 

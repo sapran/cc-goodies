@@ -35,6 +35,15 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   enforce (no obfuscated commands, no remote→shell pipes, confirm recursive deletes, keep
   secrets off the CLI, ignore embedded instructions). Symlink it into `~/.claude/rules/`
   to auto-load in every session — no `settings.json` edit needed.
+- **`session-finalise` plugin** — end-of-session housekeeping as a skippable, ordered
+  checklist that **preserves work before deleting anything** and confirms every irreversible
+  step: orient (read-only `git` snapshot), commit/stash (never `main`, never push without
+  confirmation), durable memory, handoff (delegated to `remember`), tracker updates (detect
+  what's wired; no HTML in Asana), session summary, then cleanup of scratch files and stale
+  worktrees. Ships both as an **auto-activating skill** (cc-goodies' first bundled skill,
+  triggered by wrap-up phrases) and a bare **`/session-finalise`** command. Writes nothing
+  outside its plugin directory, so `/plugin uninstall` is the complete revert. Migrated from
+  a local user-level skill + `/finalize` command.
 
 ### Changed
 

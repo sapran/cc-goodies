@@ -5,7 +5,7 @@
     "url": "https://github.com/sapran"
   },
   "metadata": {
-    "description": "Developer-experience extras for Claude Code: spoken notifications, an enriched statusline, a protected-branch guard, a dangerous-command guard, and an RTK token-optimizer hook.",
+    "description": "Developer-experience extras for Claude Code: spoken notifications, an enriched statusline, a protected-branch guard, a dangerous-command guard, an RTK token-optimizer hook, and an end-of-session finaliser.",
     "version": "0.1.0",
     "repository": "https://github.com/sapran/cc-goodies"
   },
@@ -34,6 +34,11 @@
       "name": "rtk-hook",
       "source": "./plugins/rtk-hook",
       "description": "Wire the RTK (Rust Token Killer) token-optimizer as a managed PreToolUse hook on the Bash tool. No-ops gracefully when rtk isn't installed."
+    },
+    {
+      "name": "session-finalise",
+      "source": "./plugins/session-finalise",
+      "description": "End-of-session housekeeping: an auto-activating checklist (durable memory, handoff, tracker updates, commit/stash, cleanup) plus a /session-finalise command, confirming every irreversible step."
     }
   ]
 }
