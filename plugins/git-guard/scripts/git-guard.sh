@@ -149,10 +149,39 @@ evaluate_segment() {
     case "$amap" in "$verb="*) verb="${amap#*=}"; break ;; esac
   done
 
+  # `xtarget`, when set, names the branch a verb acts on explicitly (e.g.
+  # `branch -f main`) — judged by that branch's class rather than the current one.
+  xtarget=""
   case "$verb" in
-    commit|merge|pull|rebase) action="localwrite" ;;
-    push)                     action="push" ;;
-    *)                        return 0 ;;
+    commit|merge|pull|rebase|cherry-pick|revert|am) action="localwrite" ;;
+    push)                                           action="push" ;;
+    reset)
+      # Only a history-moving reset counts; `git reset <path>` (unstage) does not.
+      action=""
+      for a in "$@"; do case "$a" in --hard|--merge|--keep) action="localwrite" ;; esac; done
+      [ -n "$action" ] || return 0 ;;
+    branch)
+      # `branch -f|-D|-M <name>` force-resets / deletes / renames the named branch.
+      bforce=0
+      for a in "$@"; do case "$a" in -f|--force|-D|-M) bforce=1 ;; esac; done
+      [ "$bforce" = 1 ] || return 0
+      for a in "$@"; do case "$a" in -*) ;; *) xtarget="$a"; break ;; esac; done
+      [ -n "$xtarget" ] || return 0
+      action="localwrite" ;;
+    update-ref)
+      for a in "$@"; do case "$a" in -*) ;; *) xtarget="$a"; break ;; esac; done
+      xtarget="${xtarget#refs/heads/}"
+      [ -n "$xtarget" ] || return 0
+      action="localwrite" ;;
+    checkout|switch)
+      # `-B`/`-C` force-create-or-reset the named branch.
+      cforce=0; prev=""
+      for a in "$@"; do case "$a" in -B|-C) cforce=1 ;; esac; done
+      [ "$cforce" = 1 ] || return 0
+      for a in "$@"; do case "$prev" in -B|-C) xtarget="$a"; break ;; esac; prev="$a"; done
+      [ -n "$xtarget" ] || return 0
+      action="localwrite" ;;
+    *)                                              return 0 ;;
   esac
 
   # Resolve the target branch + its class.
@@ -190,6 +219,8 @@ evaluate_segment() {
                         tclass="$(class_of "$br")" ;;
       *)                br="$target"; tclass="$(class_of "$br")" ;;
     esac
+  elif [ -n "$xtarget" ]; then
+    br="$xtarget"; tclass="$(class_of "$br")"   # verb names the branch explicitly
   else
     br="$(current_branch "${cdir:-$cwd}")"
     [ -n "$br" ] || return 0
