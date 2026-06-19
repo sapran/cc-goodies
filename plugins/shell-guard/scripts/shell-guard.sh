@@ -102,6 +102,7 @@ deny() {
 # Is this argument a catastrophic target — `/`, `$HOME`/`~`, a top-level system
 # directory, or a glob-all while the session sits in $HOME?
 is_cata_target() {
+  [ "${#1}" -lt 256 ] || return 1   # no catastrophic top-level target is this long — skip the O(n) work
   t="$1"
   t="${t//\"/}"; t="${t//\'/}"; t="${t#\\}"   # drop all quotes + a leading backslash (/"" \/ ''/ "$HOME")
   # The `~` / `$HOME` patterns are literal text as typed in the command, matched
@@ -144,24 +145,28 @@ eval_tokens() {
   # own options (`env -i`, `nice -n 5`) be skipped without swallowing a bare command.
   sw=0
   while [ $# -gt 0 ]; do
+    [ "${#1}" -lt 4096 ] || break   # an oversized token is the command word — no prefix to skip
     case "$1" in
       '>'|'>>'|'<'|'<<'|'<<<'|'>|'|'&>'|'&>>'|[0-9]'>'|[0-9]'>>'|[0-9]'<')
         sw=1; shift; [ $# -gt 0 ] && shift; continue ;;   # redirect op + its target token
       [0-9]*'>'*|[0-9]*'<'*|'>'*|'<'*|'&>'*)
         sw=1; shift; continue ;;                          # redirect glued to target: >/tmp/x
     esac
-    w="${1##*/}"; w="${w#\\}"; w="${w//\"/}"; w="${w//\'/}"   # basename for wrapper match
+    # basename, but only for slashed tokens under 4 KB — `${##*/}` is O(n^2) and a
+    # 4 KB+ "command word" is never a real program name, so skip the strip there.
+    case "$1" in */*) [ "${#1}" -lt 4096 ] && w="${1##*/}" || w="$1" ;; *) w="$1" ;; esac
+    w="${w#\\}"; w="${w//\"/}"; w="${w//\'/}"
     case "$w" in
-      sudo)
+      sudo|doas|su|runuser)   # privilege escalation — blocked by default
         if [ -z "${ALLOW_SUDO:-}" ] || [ "$ALLOW_SUDO" = "0" ]; then
-          deny "sudo — privilege escalation (set SHELL_GUARD_ALLOW_SUDO=1 to permit)"; return 2
+          deny "$w — privilege escalation (set SHELL_GUARD_ALLOW_SUDO=1 to permit)"; return 2
         fi
         sw=1; shift; continue ;;
-      command|exec|builtin|nice|nohup|time|env|setsid|stdbuf|ionice|chrt|then|do|else)
+      command|exec|builtin|nohup|time|env|setsid|stdbuf|then|do|else)
         sw=1; shift; continue ;;
-      timeout)   # timeout [opts] DURATION cmd — skip opts and the duration
-        sw=1; shift
-        while [ $# -gt 0 ]; do case "$1" in -*) shift ;; *) shift; break ;; esac; done
+      timeout|nice|chrt|taskset|ionice)   # resource wrappers: skip their opts AND numeric
+        sw=1; shift                        # positionals (duration/priority/mask) to the real cmd
+        while [ $# -gt 0 ]; do case "$1" in -*) shift ;; [0-9]*) shift ;; *) break ;; esac; done
         continue ;;
       xargs)     # xargs [opts] cmd — skip opts to reach the command it runs
         sw=1; shift
@@ -176,7 +181,9 @@ eval_tokens() {
   done
   [ $# -gt 0 ] || return 0
   c="$1"; shift
-  c="${c##*/}"; c="${c#\\}"; c="${c//\\/}"; c="${c//\"/}"; c="${c//\'/}"   # basename + de-quote + de-backslash
+  [ "${#c}" -lt 4096 ] || return 0   # an oversized command word is no known dangerous command
+  case "$c" in */*) c="${c##*/}" ;; esac   # basename (length-guarded above: avoid O(n^2))
+  c="${c#\\}"; c="${c//\\/}"; c="${c//\"/}"; c="${c//\'/}"   # de-quote + de-backslash
 
   case "$c" in
     rm)
@@ -206,15 +213,21 @@ eval_tokens() {
       deny "filesystem creation/wipe ($c)"; return 2
       ;;
     find)
-      # `find <protected path> … -delete` (or `-exec`/`-ok` a command) over a
-      # catastrophic path recursively destroys like `rm -rf`.
-      fdestroy=0; fcata=0
+      # `find <protected path> … -delete`, or `-exec`/`-ok` running a *mutating*
+      # command, recursively destroys like `rm -rf`. A read-only `-exec grep/cat/…`
+      # over a system dir is ordinary recon, so the executed command is inspected.
+      fdestroy=0; fcata=0; prevf=""
       for a in "$@"; do
+        case "$prevf" in
+          -exec|-execdir|-ok|-okdir)
+            case "${a##*/}" in rm|rmdir|mv|chmod|chown|shred|dd|truncate|tee|unlink) fdestroy=1 ;; esac ;;
+        esac
         case "$a" in
-          -delete|-exec|-execdir|-ok|-okdir) fdestroy=1 ;;
+          -delete) fdestroy=1 ;;
           -*) : ;;
           *) is_cata_target "$a" && fcata=1 ;;
         esac
+        prevf="$a"
       done
       [ "$fdestroy" = 1 ] && [ "$fcata" = 1 ] && { deny "destructive find over a protected path"; return 2; }
       ;;
@@ -305,11 +318,16 @@ evaluate_segment() {
   fi
   # An interpreter running an inline script string — recurse into the -c argument so
   # `bash -c "rm -rf /"` (or `timeout 5 bash -c "…"`) is judged like a normal command.
-  if [[ "$seg" =~ (^|[^[:alnum:]_])(sh|bash|zsh|dash|ksh)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*c[[:space:]]+(.*)$ ]]; then
+  # The option group accepts long options (`--norc`, `--rcfile /dev/null`) before -c.
+  # A depth bound stops a deeply nested `bash -c bash -c …` from stalling the hook.
+  if [ "${SG_CDEPTH:-0}" -lt 8 ] && [[ "$seg" =~ (^|[^[:alnum:]_])(sh|bash|zsh|dash|ksh)[[:space:]]+([-A-Za-z0-9_/.]+[[:space:]]+)*-[A-Za-z]*c[[:space:]]+(.*)$ ]]; then
     inner="${BASH_REMATCH[4]}"
     inner="${inner%\"}"; inner="${inner#\"}"; inner="${inner%\'}"; inner="${inner#\'}"
     if [ -n "$inner" ] && [ "$inner" != "$seg" ]; then
-      evaluate_segment "$inner" || return 2
+      SG_CDEPTH=$(( ${SG_CDEPTH:-0} + 1 ))
+      evaluate_segment "$inner"; rc=$?
+      SG_CDEPTH=$(( SG_CDEPTH - 1 ))
+      [ "$rc" = 2 ] && return 2
     fi
   fi
   # User-supplied extra patterns (ERE), ;- or newline-separated.
