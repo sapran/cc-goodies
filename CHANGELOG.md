@@ -70,6 +70,13 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   git (`bash -c "…"`, command substitution, `sudo -u USER git`, gitconfig aliases) is out
   of scope by design; plan mode is the backstop.
 
+### Fixed
+
+- **README shell uninstall** — the one-shot "Remove everything" steps now flag
+  `/statusline-uninstall` as a required pre-step. The `claude plugins` CLI can't drop the
+  `statusLine` key or delete the `~/.claude/team-statusline.sh` copy, so the statusline
+  kept rendering after the plugins were removed.
+
 ## [0.1.0]
 
 ### Added

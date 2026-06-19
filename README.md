@@ -79,6 +79,12 @@ Then, inside Claude, wire the statusline (the CLI can't set the `statusLine` key
 
 **Remove everything:**
 
+> **Wired the statusline? Run `/statusline-uninstall` inside Claude _before_ the commands
+> below.** The CLI can't edit the `statusLine` key, and the bar runs from a standalone copy
+> at `~/.claude/team-statusline.sh` — so removing the plugin alone leaves it rendering.
+> `/statusline-uninstall` drops the key (backing up `settings.json` first, and only if it
+> still points at this plugin's script) and deletes the copy.
+
 ```bash
 claude plugins uninstall statusline@cc-goodies
 claude plugins uninstall git-guard@cc-goodies
@@ -91,7 +97,7 @@ claude plugins marketplace remove cc-goodies
 rm -f ~/.claude/git-guard.conf ~/.claude/shell-guard.conf
 ```
 
-Uninstalling the plugins removes their hooks too (hooks are declared inline in each `plugin.json`). If you wired the statusline, run `/statusline-uninstall` inside Claude first to drop the `statusLine` key it added. The `rm -f` clears the two guard config files, which exist only if you customised those guards.
+Uninstalling the plugins removes their hooks too (hooks are declared inline in each `plugin.json`). The `rm -f` clears the two guard config files, which exist only if you customised those guards.
 
 ## Requirements
 
