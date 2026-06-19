@@ -1,44 +1,41 @@
 # git-guard
 
-A `PreToolUse` hook that **blocks accidental writes to protected branches before
-they run**. When Claude tries a `git commit`, `git merge`, `git pull`, `git rebase`,
-or `git push` that the active policy forbids, the command is denied (exit 2) and
-Claude is told why — instead of finding out after `main` already moved.
+A `PreToolUse` hook that **blocks an aligned agent from accidentally writing a
+protected branch before it happens**. When Claude tries a `git commit`, `git merge`,
+`git pull`, `git rebase`, or `git push` that would land on `main` (or `master`), the
+command is denied (exit 2) and Claude is told why — instead of finding out after
+`main` already moved.
 
 It only ever gates **Claude's Bash tool**. You can still run any command yourself
 in a terminal.
 
 ## What a block looks like
 
-When the active policy forbids a command, the hook exits 2 and Claude sees this on
-stderr (so it stops and tells you, instead of `main` moving). For `git push origin main`
-under the default policy 2:
+When a command would write a protected branch, the hook exits 2 and Claude sees this
+on stderr (so it stops and tells you, instead of `main` moving). For
+`git push origin main`:
 
 ```text
-⛔ git-guard (policy 2): blocked push to protected branch 'main'.
+⛔ git-guard: blocked push to protected branch 'main'.
    Protected: main master. Use a feature branch or 'develop'.
    Override: run it yourself in a terminal, set GIT_GUARD_DISABLE=1, or see /git-guard.
 ```
 
-## Policies
+## Behavior
 
-Pick how strict you want it with `GIT_GUARD_POLICY` (default **2**):
+One built-in behaviour, one optional toggle:
 
-| Policy | Push → main | Commit → main | Push → develop | Commit → develop |
-|:------:|:-----------:|:-------------:|:--------------:|:----------------:|
-| **1** | ⛔ block | ✅ allow | ✅ allow | ✅ allow |
-| **2** (default) | ⛔ block | ⛔ block | ✅ allow | ✅ allow |
-| **3** | ⛔ block | ⛔ block | ⛔ block *(all pushes)* | ✅ allow |
+- **Default** — keep protected branches clean: block a local write (`commit`, `merge`,
+  `pull`, `rebase`, `cherry-pick`, `revert`, history-moving `reset`) while you are **on**
+  a protected branch, and block any **push** whose resolved target is a protected
+  branch. Everything on `develop` and feature branches is unrestricted.
+- **`GIT_GUARD_BLOCK_ALL_PUSH=1`** — additionally block **every** push, regardless of
+  target (useful for a strictly local-only workflow).
 
-- **Policy 1** — lenient: only stop pushes that land on `main`. Local commits to
-  `main` are fine.
-- **Policy 2** — default: keep `main` clean entirely — no commits *and* no pushes to
-  it. `develop` (and feature branches) are unrestricted.
-- **Policy 3** — local-only on `develop`: no pushing **anywhere**, and no commits to
-  `main`. Commits to `develop` and feature branches are still allowed.
-
-"Commit → main" also covers `git merge`, `git pull`, and `git rebase` while on a
-protected branch, since each mutates the current branch exactly like a commit.
+A local write is judged against the current branch because `git merge`, `git pull`,
+`git rebase` (and a history-moving `reset --hard|--merge|--keep`) each mutate it exactly
+like a commit. The protected-branch list is `GIT_GUARD_MAIN_BRANCHES` (default
+`main master`).
 
 ## Install
 
@@ -48,7 +45,7 @@ protected branch, since each mutates the current branch exactly like a commit.
 ```
 
 The hook activates on install (restart or `/hooks` to load it). Run `/git-guard` any
-time to view or change the policy.
+time to view or change its settings.
 
 ## Configure
 
@@ -58,16 +55,15 @@ every command, so changes take effect immediately — no restart.
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `GIT_GUARD_POLICY` | `2` | `1`, `2`, or `3` (see table above) |
 | `GIT_GUARD_MAIN_BRANCHES` | `main master` | Space-separated protected branches |
-| `GIT_GUARD_DEV_BRANCHES` | `develop` | Space-separated "dev" branches |
+| `GIT_GUARD_BLOCK_ALL_PUSH` | *(unset)* | Set to `1` to block **every** push, not just pushes to a protected branch |
 | `GIT_GUARD_DISABLE` | *(unset)* | Set to `1` to pause the guard without uninstalling |
 
 Example `~/.claude/git-guard.conf`:
 
 ```sh
-GIT_GUARD_POLICY=3
 GIT_GUARD_MAIN_BRANCHES="main master release"
+GIT_GUARD_BLOCK_ALL_PUSH=1
 ```
 
 The easiest way to edit it is the `/git-guard` command, which shows the current
@@ -93,11 +89,10 @@ Target branches are resolved properly, not by substring matching:
   `git push origin HEAD:refs/heads/main`, the force shorthand `git push origin +main`,
   the quoted `git push origin "main"`, and `git push origin HEAD` (current branch)
   → all resolve to `main`.
-- Command wrappers are unwrapped, **including their options and option values** —
-  `timeout -s KILL 60 git push …`, `nice -n 5 git push …`, `sudo -u alice git push …`,
-  `env -i git push …`, plus `chrt` / `ionice` / `taskset` / `xargs` / `stdbuf` /
-  `setsid` — so a wrapper flag's value is never mistaken for the command and the
-  wrapped `git` is still judged.
+- Common non-evasive wrappers are unwrapped to reach the real `git` —
+  `timeout 60 git push …`, `nice git push …`, `sudo git push …`, `env … git push …`,
+  plus `rtk proxy git push …` (and `rtk git push …`) — so the wrapped command is still
+  judged. A flat skip, not a per-wrapper flag parser: a misparse just fails open.
 - `git push --all` / `--mirror` → treated as touching protected branches.
 - `git push origin :main` (delete remote `main`) → blocked.
 - `git push -o <v>` / `--push-option <v>` / `--receive-pack <v>` / `--exec <v>` →
@@ -105,11 +100,8 @@ Target branches are resolved properly, not by substring matching:
 - `git commit` / `merge` / `pull` / `rebase` / `cherry-pick` / `revert` / `am`, and
   a history-moving `git reset --hard|--merge|--keep` → judged against the **current**
   branch (each mutates it like a commit).
-- `git branch -f|-D|-M|-C <b>` and `git branch -m|-c` (rename/copy onto **or** off a
-  protected branch), `git update-ref [-m <msg>] refs/heads/<b>`,
-  `git checkout/switch -B <b>` → judged against the **named** branch `<b>` (direct
-  ref rewrites).
-- `git -c alias.x=push x …` → the inline alias is resolved to its real verb.
+- `git branch -f|-D|-M <protected>` (force-reset / delete / force-rename onto a
+  protected branch) → blocked.
 - `git -C <path> …` → the branch is resolved in `<path>`, not the cwd.
 - Compound commands are split on `&&`, `||`, `;`, newlines, single pipes, background
   `&`, subshells `( )` and brace groups `{ }`, so `git add . && git push origin main`,
@@ -126,14 +118,14 @@ Target branches are resolved properly, not by substring matching:
   session sits on an unprotected branch, miss a write to another repo's `main`. Use
   the `git -C /path …` form for another repo — that **is** resolved correctly. Working
   normally inside the repo is fully covered.
-- **Best-effort shell parsing.** Common wrappers (`timeout`, `nice`, `sudo`, `env`,
-  `xargs`, `setsid`, …) — with their options and option values — and inline
-  `-c alias.*=` definitions are resolved, but a `git` verb hidden inside a
-  `bash -c "…"`/`su -c "…"` string, backtick/`$()` command substitution, a **persistent**
-  or **shell (`!cmd`)** alias from `~/.gitconfig`, or a rare value-taking wrapper option
-  outside the table (`exec -a NAME`, `/usr/bin/time -o FILE`) can still slip through —
-  this is a convenience guard, not a server-side branch protection. Pair it with real
-  protections (GitHub branch rules) for anything that matters.
+- **Deliberately hidden git is out of scope by design.** This guard stops the *plain
+  accident* (`git push origin main`, a commit while on `main`), not an agent that is
+  actively trying to evade it. A `git` verb buried in a `bash -c "…"` string,
+  backtick/`$()` command substitution, a `sudo -u USER git …` identity switch, or a
+  persistent `~/.gitconfig` alias will **not** be caught — and the guard does not try.
+  Plan mode is the backstop for intent; this is a convenience guard, not a server-side
+  branch protection. Pair it with real protections (GitHub branch rules) for anything
+  that matters.
 - **Requires `jq`** to parse the hook input. If `jq` is missing the guard prints a
   one-line warning and **allows** the command (it fails open rather than blocking
   every Bash call). `brew install jq` to enable it.
