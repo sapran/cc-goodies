@@ -93,14 +93,22 @@ Target branches are resolved properly, not by substring matching:
   `git push origin HEAD:refs/heads/main`, the force shorthand `git push origin +main`,
   the quoted `git push origin "main"`, and `git push origin HEAD` (current branch)
   → all resolve to `main`.
-- Common wrappers are unwrapped — `timeout 60 git push …`, `setsid git push …`.
+- Command wrappers are unwrapped, **including their options and option values** —
+  `timeout -s KILL 60 git push …`, `nice -n 5 git push …`, `sudo -u alice git push …`,
+  `env -i git push …`, plus `chrt` / `ionice` / `taskset` / `xargs` / `stdbuf` /
+  `setsid` — so a wrapper flag's value is never mistaken for the command and the
+  wrapped `git` is still judged.
 - `git push --all` / `--mirror` → treated as touching protected branches.
 - `git push origin :main` (delete remote `main`) → blocked.
+- `git push -o <v>` / `--push-option <v>` / `--receive-pack <v>` / `--exec <v>` →
+  the flag's value can't masquerade as the remote or refspec.
 - `git commit` / `merge` / `pull` / `rebase` / `cherry-pick` / `revert` / `am`, and
   a history-moving `git reset --hard|--merge|--keep` → judged against the **current**
   branch (each mutates it like a commit).
-- `git branch -f|-D|-M <b>`, `git update-ref refs/heads/<b>`, `git checkout/switch -B <b>`
-  → judged against the **named** branch `<b>` (direct ref rewrites).
+- `git branch -f|-D|-M|-C <b>` and `git branch -m|-c` (rename/copy onto **or** off a
+  protected branch), `git update-ref [-m <msg>] refs/heads/<b>`,
+  `git checkout/switch -B <b>` → judged against the **named** branch `<b>` (direct
+  ref rewrites).
 - `git -c alias.x=push x …` → the inline alias is resolved to its real verb.
 - `git -C <path> …` → the branch is resolved in `<path>`, not the cwd.
 - Compound commands are split on `&&`, `||`, `;`, newlines, single pipes, background
@@ -118,11 +126,13 @@ Target branches are resolved properly, not by substring matching:
   session sits on an unprotected branch, miss a write to another repo's `main`. Use
   the `git -C /path …` form for another repo — that **is** resolved correctly. Working
   normally inside the repo is fully covered.
-- **Best-effort shell parsing.** Common wrappers (`timeout`, `setsid`, `xargs`) and
-  inline `-c alias.*=` definitions are resolved, but a `git` verb hidden inside a
-  `bash -c "…"` string, backtick/`$()` command substitution, or a **persistent** or
-  **shell (`!cmd`)** alias from `~/.gitconfig` can still slip through — this is a
-  convenience guard, not a server-side branch protection. Pair it with real
+- **Best-effort shell parsing.** Common wrappers (`timeout`, `nice`, `sudo`, `env`,
+  `xargs`, `setsid`, …) — with their options and option values — and inline
+  `-c alias.*=` definitions are resolved, but a `git` verb hidden inside a
+  `bash -c "…"`/`su -c "…"` string, backtick/`$()` command substitution, a **persistent**
+  or **shell (`!cmd`)** alias from `~/.gitconfig`, or a rare value-taking wrapper option
+  outside the table (`exec -a NAME`, `/usr/bin/time -o FILE`) can still slip through —
+  this is a convenience guard, not a server-side branch protection. Pair it with real
   protections (GitHub branch rules) for anything that matters.
 - **Requires `jq`** to parse the hook input. If `jq` is missing the guard prints a
   one-line warning and **allows** the command (it fails open rather than blocking

@@ -64,6 +64,20 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   treated as local writes: blocked on protected branches under policy 2 (default) and 3,
   allowed on dev/feature branches, and never blocked under policy 1.
 
+### Fixed
+
+- **`git-guard` & `shell-guard` — wrapper / flag bypass hardening (round 5).** Both
+  guards now consume a command wrapper's *options and their values*, closing a class of
+  bypasses where a wrapper argument was mistaken for the wrapped command. Newly blocked
+  in git-guard: `nice -n 5 git push origin main`, `timeout -s KILL 60 git push …`,
+  `sudo -u alice git push …`, `env -i …`, and `chrt`/`ionice`/`taskset`/`stdbuf`/`xargs`
+  forms; in shell-guard: `timeout -s KILL 5 rm -rf /`, `xargs -n 1 rm -rf /`, and
+  `find / -exec timeout -s KILL 5 rm {} +`. git-guard additionally skips push value-flag
+  values (`-o`/`--push-option`/`--receive-pack`/`--exec`) so they can't masquerade as the
+  remote/refspec, skips `update-ref -m <msg>`, and catches `git branch -m|-c` renaming or
+  copying onto **or** off a protected branch. Remaining residuals (`exec -a NAME`,
+  `time -o FILE`, `su -c "<cmd>"`) are documented.
+
 ## [0.1.0]
 
 ### Added

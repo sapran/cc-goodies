@@ -223,11 +223,13 @@ ever gate Claude's Bash tool, never your own shell.
   set and stays out of the way of ordinary work; it will not catch every destructive
   command. Add your own via `SHELL_GUARD_EXTRA_PATTERNS`.
 - **Best-effort shell parsing.** Pipes, `&`, subshells, brace groups, backticks,
-  common wrappers (`timeout`/`setsid`/`env`/`xargs`) and `bash -c "…"` strings are
-  now handled, but a few classes are irreducible for a static text guard: a target
-  supplied at runtime via **stdin** (`… | xargs rm`), a **two-step** download-then-run,
-  a **hex/`$'\x..'`-encoded** command name, `eval`/variable indirection, and a
-  **persistent/shell `~/.gitconfig` alias**. Layer 0 (plan mode) remains the backstop.
+  common wrappers (`timeout`/`nice`/`sudo`/`env`/`xargs`/`setsid`/…) **with their
+  options and option values**, and `bash -c "…"` strings are now handled, but a few
+  classes are irreducible for a static text guard: a target supplied at runtime via
+  **stdin** (`… | xargs rm`), a **two-step** download-then-run, a
+  **hex/`$'\x..'`-encoded** command name, `eval`/variable indirection, a
+  **persistent/shell `~/.gitconfig` alias**, and a rare value-taking wrapper option
+  outside the table (`exec -a`, `time -o`, `su -c`). Layer 0 (plan mode) remains the backstop.
 - **`rm -rf *` is only caught in `$HOME`.** Elsewhere the guard can't know what `*`
   expands to, so it allows it (blocking every `rm -rf *` would break normal build work).
 - **Not a sandbox, not server-side.** Pair with backups and GitHub/GitLab branch
