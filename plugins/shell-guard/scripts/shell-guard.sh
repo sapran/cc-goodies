@@ -75,8 +75,14 @@ ALLOW_SUDO="${SHELL_GUARD_ALLOW_SUDO:-$(conf_get SHELL_GUARD_ALLOW_SUDO)}"
 
 # Regexes kept in variables so the `>` / `(` inside them never confuse the [[ ]]
 # parser, and so they read as plain ERE.
-NET_RE='(curl|wget|fetch)[^|]*\|[[:space:]]*(sudo[[:space:]]+)?(sh|bash|zsh|dash)([[:space:]]|-|$)'
-NETSUB_RE='(sh|bash|zsh|dash)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*<\((curl|wget|fetch)'
+# A download whose output reaches an interpreter — through any number of pipe
+# stages, an optional env/var/sudo prefix before the shell, and a wider set of
+# interpreters (sh/bash/zsh/dash/ksh + python/perl/ruby/node/php).
+NET_RE='(curl|wget|fetch)([^|]*\|)+[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+|env[[:space:]]+|sudo[[:space:]]+)*(sh|bash|zsh|dash|ksh|python[0-9.]*|perl|ruby|node|php)([[:space:]]|-|$)'
+# Process substitution fed to an interpreter incl. source/. — `bash <(curl …)`.
+NETSUB_RE='(sh|bash|zsh|dash|ksh|source|\.)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*<\((curl|wget|fetch)'
+# Command substitution fed to an interpreter — `bash -c "$(curl …)"`.
+NETCMDSUB_RE='(sh|bash|zsh|dash|ksh)[[:space:]][^=]*\$\([[:space:]]*(curl|wget|fetch)'
 DEV_RE='>[[:space:]]*/dev/(disk|rdisk|sd|hd|nvme|vd)'
 FORK_RE='([A-Za-z_:][A-Za-z0-9_:]*)\(\)[[:space:]]*\{(.*)\}'
 # The `: >` truncate-to-empty idiom: a segment that starts with `:` then a
@@ -216,7 +222,7 @@ evaluate_segment() {
   seg="$1"
 
   # -- raw-text checks (these don't survive tokenising) ----------------------
-  if [[ "$seg" =~ $NET_RE ]] || [[ "$seg" =~ $NETSUB_RE ]]; then
+  if [[ "$seg" =~ $NET_RE ]] || [[ "$seg" =~ $NETSUB_RE ]] || [[ "$seg" =~ $NETCMDSUB_RE ]]; then
     deny "network download piped into a shell"; return 2
   fi
   if [[ "$seg" =~ $DEV_RE ]]; then
