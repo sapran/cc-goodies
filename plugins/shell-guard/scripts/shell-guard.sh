@@ -75,9 +75,16 @@ ALLOW_SUDO="${SHELL_GUARD_ALLOW_SUDO:-$(conf_get SHELL_GUARD_ALLOW_SUDO)}"
 
 # Regexes kept in variables so the `>` / `(` inside them never confuse the [[ ]]
 # parser, and so they read as plain ERE.
-NET_RE='(curl|wget|fetch)[^|]*\|[[:space:]]*(sudo[[:space:]]+)?(sh|bash|zsh|dash)([[:space:]]|-|$)'
-NETSUB_RE='(sh|bash|zsh|dash)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*<\((curl|wget|fetch)'
-DEV_RE='>[[:space:]]*/dev/(disk|rdisk|sd|hd|nvme|vd)'
+# A download whose output reaches an interpreter — through any number of pipe
+# stages, an optional env/var/sudo prefix before the shell, and a wider set of
+# interpreters (sh/bash/zsh/dash/ksh + python/perl/ruby/node/php).
+NET_RE='(curl|wget|fetch)([^|]*\|)+[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+|env[[:space:]]+|sudo[[:space:]]+|xargs([[:space:]]+-[^[:space:]]+)*[[:space:]]+)*(sh|bash|zsh|dash|ksh|pwsh|python[0-9.]*|perl|ruby|node|php|osascript|deno|bun|Rscript|tclsh|lua)([[:space:]]|-|$|[);&|}])'
+# Process substitution fed to an interpreter incl. source/. and a `< <(curl …)` stdin redirect.
+NETSUB_RE='(sh|bash|zsh|dash|ksh|source|\.)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*(<[[:space:]]*)?<\((curl|wget|fetch)'
+# Command substitution fed to an interpreter — `bash -c "$(curl …)"`, `python -c "$(curl …)"`.
+NETCMDSUB_RE='(sh|bash|zsh|dash|ksh|pwsh|python[0-9.]*|perl|ruby|node|php)[[:space:]][^=]*\$\([[:space:]]*(curl|wget|fetch)'
+# Redirect onto a raw disk device — `> /dev/disk0`, `>| /dev/disk0`, quoted target.
+DEV_RE='>[|]?[[:space:]]*["'"'"']?/dev/(disk|rdisk|sd|hd|nvme|vd)'
 FORK_RE='([A-Za-z_:][A-Za-z0-9_:]*)\(\)[[:space:]]*\{(.*)\}'
 # The `: >` truncate-to-empty idiom: a segment that starts with `:` then a
 # single `>` redirect. (A bare `> file` is an ordinary redirect — not matched.)
@@ -95,8 +102,9 @@ deny() {
 # Is this argument a catastrophic target — `/`, `$HOME`/`~`, a top-level system
 # directory, or a glob-all while the session sits in $HOME?
 is_cata_target() {
+  [ "${#1}" -lt 256 ] || return 1   # no catastrophic top-level target is this long — skip the O(n) work
   t="$1"
-  t="${t#\"}"; t="${t%\"}"; t="${t#\'}"; t="${t%\'}"   # strip surrounding quotes
+  t="${t//\"/}"; t="${t//\'/}"; t="${t#\\}"   # drop all quotes + a leading backslash (/"" \/ ''/ "$HOME")
   # The `~` / `$HOME` patterns are literal text as typed in the command, matched
   # verbatim — not meant to expand here. (Silences SC2088/SC2016.)
   # shellcheck disable=SC2088,SC2016
@@ -110,71 +118,77 @@ is_cata_target() {
     /usr|/etc|/bin|/sbin|/lib|/lib64|/var|/boot|/sys|/proc|/dev|/opt|/root|/run|/home|/Users|/System|/Library|/Applications|/Volumes)
       return 0 ;;
   esac
+  # A glob-all of a top-level system dir's contents — `/usr/*`, `/etc/*` — is just as fatal.
+  case "$t" in
+    */\*) case "${d%/\*}" in
+            /usr|/etc|/bin|/sbin|/lib|/lib64|/var|/boot|/sys|/proc|/dev|/opt|/root|/run|/home|/Users|/System|/Library|/Applications|/Volumes)
+              return 0 ;;
+          esac ;;
+  esac
   if [ -n "${CWD:-}" ] && [ "$CWD" = "$HOME" ]; then
     case "$t" in '.'|'./'|'*'|'.*'|'./*') return 0 ;; esac
   fi
   return 1
 }
 
-# Evaluate ONE command segment. Returns 2 (and prints) to block, 0 to allow.
-evaluate_segment() {
-  seg="$1"
-
-  # -- raw-text checks (these don't survive tokenising) ----------------------
-  if [[ "$seg" =~ $NET_RE ]] || [[ "$seg" =~ $NETSUB_RE ]]; then
-    deny "network download piped into a shell"; return 2
-  fi
-  if [[ "$seg" =~ $DEV_RE ]]; then
-    deny "redirect onto a raw disk device"; return 2
-  fi
-  if [[ "$seg" =~ $TRUNC_RE ]]; then
-    deny "truncate a file to empty (\`: >\`)"; return 2
-  fi
-  # Fork bomb: a function that pipes & backgrounds a call to itself.
-  if [[ "$seg" =~ $FORK_RE ]]; then
-    fn="${BASH_REMATCH[1]}"; body="${BASH_REMATCH[2]}"
-    if [[ "$body" == *"|"* && "$body" == *"&"* && "$body" == *"$fn"* ]]; then
-      deny "fork bomb"; return 2
-    fi
-  fi
-  # User-supplied extra patterns (ERE), ;- or newline-separated.
-  if [ -n "${EXTRA:-}" ]; then
-    while IFS= read -r pat; do
-      [ -n "$pat" ] || continue
-      [[ "$seg" =~ $pat ]] && { deny "matches a configured block pattern"; return 2; }
-    done <<EOF2
-$(printf '%s\n' "$EXTRA" | awk '{gsub(/;/,"\n")}1')
-EOF2
-  fi
-
-  # -- tokenised checks ------------------------------------------------------
+# Evaluate the tokenised command word of ONE pipeline stage. Returns 2 to block.
+eval_tokens() {
   # shellcheck disable=SC2086
-  set -- $seg
+  set -- $1
   [ $# -gt 0 ] || return 0
 
-  # Walk past benign prefixes / shell keywords to the real command word.
-  # `sudo` is blocked outright by default (privilege escalation); with
-  # SHELL_GUARD_ALLOW_SUDO set it's treated as a prefix so the wrapped command
-  # is still inspected (e.g. `sudo rm -rf /` is caught by the rm check below).
+  # Walk past leading redirections, command wrappers, and shell keywords to the real
+  # command word. `sudo` is blocked outright by default (privilege escalation); with
+  # SHELL_GUARD_ALLOW_SUDO set it's treated as a prefix so the wrapped command is still
+  # inspected. Wrappers (timeout/setsid/env/xargs/…) are matched by basename so
+  # `/usr/bin/env rm -rf /` is handled; sw=1 once we are past a prefix lets a wrapper's
+  # own options (`env -i`, `nice -n 5`) be skipped without swallowing a bare command.
+  sw=0
   while [ $# -gt 0 ]; do
+    [ "${#1}" -lt 4096 ] || break   # an oversized token is the command word — no prefix to skip
     case "$1" in
-      sudo)
+      '>'|'>>'|'<'|'<<'|'<<<'|'>|'|'&>'|'&>>'|[0-9]'>'|[0-9]'>>'|[0-9]'<')
+        sw=1; shift; [ $# -gt 0 ] && shift; continue ;;   # redirect op + its target token
+      [0-9]*'>'*|[0-9]*'<'*|'>'*|'<'*|'&>'*)
+        sw=1; shift; continue ;;                          # redirect glued to target: >/tmp/x
+    esac
+    # basename, but only for slashed tokens under 4 KB — `${##*/}` is O(n^2) and a
+    # 4 KB+ "command word" is never a real program name, so skip the strip there.
+    case "$1" in */*) [ "${#1}" -lt 4096 ] && w="${1##*/}" || w="$1" ;; *) w="$1" ;; esac
+    w="${w#\\}"; w="${w//\"/}"; w="${w//\'/}"
+    case "$w" in
+      sudo|doas|su|runuser|pkexec|gosu|sudoedit|setpriv)   # privilege escalation — blocked by default
         if [ -z "${ALLOW_SUDO:-}" ] || [ "$ALLOW_SUDO" = "0" ]; then
-          deny "sudo — privilege escalation (set SHELL_GUARD_ALLOW_SUDO=1 to permit)"; return 2
+          deny "$w — privilege escalation (set SHELL_GUARD_ALLOW_SUDO=1 to permit)"; return 2
         fi
-        shift ;;
-      *=*|command|exec|builtin|nice|nohup|time|env|then|do|else) shift ;;
-      *) break ;;
+        sw=1; shift; continue ;;
+      command|exec|builtin|nohup|time|env|setsid|stdbuf|then|do|else)
+        sw=1; shift; continue ;;
+      timeout|nice|chrt|taskset|ionice)   # resource wrappers: skip their opts AND numeric
+        sw=1; shift                        # positionals (duration/priority/mask) to the real cmd
+        while [ $# -gt 0 ]; do case "$1" in -*) shift ;; [0-9]*) shift ;; *) break ;; esac; done
+        continue ;;
+      xargs)     # xargs [opts] cmd — skip opts to reach the command it runs
+        sw=1; shift
+        while [ $# -gt 0 ]; do case "$1" in -*) shift ;; *) break ;; esac; done
+        continue ;;
+    esac
+    case "$1" in
+      *=*) sw=1; shift; continue ;;                       # VAR=val prefix
+      -*)  if [ "$sw" = 1 ]; then shift; continue; else break; fi ;;  # a wrapper's option
+      *)   break ;;
     esac
   done
   [ $# -gt 0 ] || return 0
   c="$1"; shift
+  [ "${#c}" -lt 4096 ] || return 0   # an oversized command word is no known dangerous command
+  case "$c" in */*) c="${c##*/}" ;; esac   # basename (length-guarded above: avoid O(n^2))
+  c="${c#\\}"; c="${c//\\/}"; c="${c//\"/}"; c="${c//\'/}"   # de-quote + de-backslash
 
   case "$c" in
     rm)
-      # A recursive removal of a catastrophic target is blocked whether or not
-      # -f is present (`rm -r /` is just as fatal); --no-preserve-root is always
-      # a red flag, so we don't track the force flag separately.
+      # Recursive removal of a catastrophic target is blocked with or without -f
+      # (`rm -r /` is just as fatal); --no-preserve-root is always a red flag.
       has_r=0; nopreserve=0; cata=0
       for a in "$@"; do
         case "$a" in
@@ -191,16 +205,59 @@ EOF2
       ;;
     dd)
       for a in "$@"; do
-        case "$a" in of=/dev/*) deny "dd onto a device node"; return 2 ;; esac
+        na="${a//\"/}"; na="${na//\'/}"
+        case "$na" in of=/dev/*) deny "dd onto a device node"; return 2 ;; esac
       done
       ;;
     mkfs|mkfs.*|wipefs|newfs|newfs_*)
       deny "filesystem creation/wipe ($c)"; return 2
       ;;
+    find)
+      # `find <protected path> … -delete`, or `-exec`/`-ok` running a *mutating*
+      # command, recursively destroys like `rm -rf`. A read-only `-exec grep/cat/…`
+      # over a system dir is ordinary recon, so the executed command is inspected.
+      fdestroy=0; fcata=0; inexec=0
+      for a in "$@"; do
+        if [ "$inexec" = 1 ]; then   # walk past wrappers to the command -exec actually runs
+          case "${a##*/}" in
+            env|nohup|setsid|stdbuf|ionice|nice|chrt|taskset|timeout|xargs|command|exec|sudo|doas|su|runuser) : ;;
+            *=*|-*|[0-9]*) : ;;      # VAR=val, a wrapper option, or a numeric positional
+            rm|rmdir|mv|chmod|chown|shred|dd|truncate|tee|unlink) fdestroy=1; inexec=0 ;;
+            *) inexec=0 ;;           # a read-only command (grep/cat/…): stop, not destructive
+          esac
+        fi
+        case "$a" in
+          -exec|-execdir|-ok|-okdir) inexec=1 ;;
+          -delete) fdestroy=1 ;;
+          -*) : ;;
+          *) is_cata_target "$a" && fcata=1 ;;
+        esac
+      done
+      [ "$fdestroy" = 1 ] && [ "$fcata" = 1 ] && { deny "destructive find over a protected path"; return 2; }
+      ;;
+    shred)
+      for a in "$@"; do
+        na="${a//\"/}"; na="${na//\'/}"
+        case "$na" in
+          /dev/disk*|/dev/rdisk*|/dev/sd*|/dev/hd*|/dev/nvme*|/dev/vd*) deny "shred a raw disk device"; return 2 ;;
+        esac
+        is_cata_target "$a" && { deny "shred of a protected path"; return 2; }
+      done
+      ;;
+    cp|tee)
+      # Overwriting a raw disk device via cp/tee (not just dd/redirect).
+      for a in "$@"; do
+        na="${a//\"/}"; na="${na//\'/}"
+        case "$na" in
+          /dev/disk*|/dev/rdisk*|/dev/sd*|/dev/hd*|/dev/nvme*|/dev/vd*) deny "$c onto a raw disk device"; return 2 ;;
+        esac
+      done
+      ;;
     diskutil)
       case "${1:-}" in
         eraseDisk|eraseVolume|reformat|zeroDisk|secureErase|partitionDisk|eraseall)
           deny "destructive diskutil ($1)"; return 2 ;;
+        apfs) case "${2:-}" in delete*|erase*) deny "destructive diskutil (apfs $2)"; return 2 ;; esac ;;
       esac
       ;;
     chmod|chown)
@@ -239,6 +296,66 @@ EOF2
       done
       ;;
   esac
+  return 0
+}
+
+# Evaluate ONE command segment. Returns 2 (and prints) to block, 0 to allow.
+evaluate_segment() {
+  seg="$1"
+
+  # -- raw-text checks (these don't survive tokenising) ----------------------
+  if [[ "$seg" =~ $NET_RE ]] || [[ "$seg" =~ $NETSUB_RE ]] || [[ "$seg" =~ $NETCMDSUB_RE ]]; then
+    deny "network download piped into a shell"; return 2
+  fi
+  if [[ "$seg" =~ $DEV_RE ]]; then
+    deny "redirect onto a raw disk device"; return 2
+  fi
+  if [[ "$seg" =~ $TRUNC_RE ]]; then
+    deny "truncate a file to empty (\`: >\`)"; return 2
+  fi
+  # Fork bomb: a function that pipes & backgrounds a call to itself.
+  if [[ "$seg" =~ $FORK_RE ]]; then
+    fn="${BASH_REMATCH[1]}"; body="${BASH_REMATCH[2]}"
+    if [[ "$body" == *"|"* && "$body" == *"&"* && "$body" == *"$fn"* ]]; then
+      deny "fork bomb"; return 2
+    fi
+  fi
+  # An interpreter running an inline script string — recurse into the -c argument so
+  # `bash -c "rm -rf /"` (or `timeout 5 bash -c "…"`) is judged like a normal command.
+  # The option group accepts long options (`--norc`, `--rcfile /dev/null`) before -c.
+  # A depth bound stops a deeply nested `bash -c bash -c …` from stalling the hook.
+  if [ "${SG_CDEPTH:-0}" -lt 8 ] && [[ "$seg" =~ (^|[^[:alnum:]_])(sh|bash|zsh|dash|ksh)[[:space:]]+([-A-Za-z0-9_/.=]+[[:space:]]+)*-[A-Za-z]*c[[:space:]]+(.*)$ ]]; then
+    inner="${BASH_REMATCH[4]}"
+    inner="${inner%\"}"; inner="${inner#\"}"; inner="${inner%\'}"; inner="${inner#\'}"
+    if [ -n "$inner" ] && [ "$inner" != "$seg" ]; then
+      SG_CDEPTH=$(( ${SG_CDEPTH:-0} + 1 ))
+      evaluate_segment "$inner"; rc=$?
+      SG_CDEPTH=$(( SG_CDEPTH - 1 ))
+      [ "$rc" = 2 ] && return 2
+    fi
+  fi
+  # User-supplied extra patterns (ERE), ;- or newline-separated.
+  if [ -n "${EXTRA:-}" ]; then
+    while IFS= read -r pat; do
+      [ -n "$pat" ] || continue
+      [[ "$seg" =~ $pat ]] && { deny "matches a configured block pattern"; return 2; }
+    done <<EOF2
+$(printf '%s\n' "$EXTRA" | awk '{gsub(/;/,"\n")}1')
+EOF2
+  fi
+
+  # -- tokenised checks ------------------------------------------------------
+  # The pipe/redirect-aware regexes above already ran on the whole segment.
+  # Now split it into pipeline stages and subshell/brace bodies (on | & ( ) { })
+  # and run the per-command checks on each, so a dangerous command behind a pipe,
+  # a background &, a subshell or a brace group is still inspected. set -f (top of
+  # file) keeps globs literal across the split.
+  while IFS= read -r stage; do
+    [ -n "$stage" ] || continue
+    eval_tokens "$stage" || return 2
+  done <<EOF_STAGE
+$(printf '%s\n' "$seg" | awk '{gsub(/[|&(){}]/,"\n"); gsub(/\140/,"\n")}1')
+EOF_STAGE
   return 0
 }
 

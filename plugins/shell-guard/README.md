@@ -44,24 +44,40 @@ Each is matched after normalising flags/spacing, not by naïve substring match:
 - **`dd` onto a device** — `dd … of=/dev/…`.
 - **Filesystem create/wipe** — `mkfs`, `mkfs.*`, `wipefs`, `newfs`, `newfs_*`.
 - **Destructive `diskutil`** — `eraseDisk`, `eraseVolume`, `reformat`, `zeroDisk`,
-  `secureErase`, `partitionDisk`, `eraseall`.
-- **Redirect onto a raw disk device** — `> /dev/disk*`, `/dev/rdisk*`, `/dev/sd*`,
-  `/dev/hd*`, `/dev/nvme*`, `/dev/vd*` (but **not** `/dev/null`, `/dev/zero`, a tty…).
+  `secureErase`, `partitionDisk`, `eraseall`, `apfs delete*`/`apfs erase*`.
+- **Overwrite a raw disk device** — a `>` redirect, or `dd of=`, `cp`, or `tee`
+  whose target is `/dev/disk*`, `/dev/rdisk*`, `/dev/sd*`, `/dev/hd*`, `/dev/nvme*`,
+  `/dev/vd*` (but **not** `/dev/null`, `/dev/zero`, a tty…).
+- **Recursive unlink without `rm`** — `find <protected path> … -delete`, or
+  `find <protected path> … -exec` running a *mutating* command (rm/mv/chmod/shred/…);
+  a read-only `-exec grep/cat/ls/…` over a system dir is allowed. Also `shred` of a
+  raw disk device or a protected path.
 - **Fork bomb** — a function that pipes and backgrounds a call to itself
   (`:(){ :|:& };:` and renamed variants).
-- **Network download piped into a shell** — `curl`/`wget`/`fetch` piped into
-  `sh`/`bash`/`zsh`/`dash` (including via `sudo`, and `bash <(curl …)`).
+- **Network download fed to an interpreter** — `curl`/`wget`/`fetch` reaching a
+  shell or language runtime (`sh`/`bash`/`zsh`/`dash`/`ksh`/`pwsh`, `python`/`perl`/
+  `ruby`/`node`/`php`/`deno`/`bun`/`Rscript`/`lua`/`tclsh`/`osascript`) through one or
+  more pipe stages (incl. via `sudo`/`env`/`xargs`/a `VAR=…` prefix), process
+  substitution (`bash <(curl …)`, `source <(curl …)`), or command substitution
+  (`bash -c "$(curl …)"`).
 - **Truncate a file to empty** — the `: > file` idiom and `truncate -s 0` /
   `--size=0` (but **not** a plain `> file` redirect, nor `: >> file` append).
 - **`chmod 777`** — world-writable permissions (`chmod 777` / `0777`, recursive or not).
 - **`eval`** — arbitrary code execution.
-- **`sudo`** — privilege escalation, blocked by default (opt out with
-  `SHELL_GUARD_ALLOW_SUDO=1`; see **Configure**).
+- **Privilege escalation** — `sudo`, `su`, `doas`, `runuser`, `pkexec`, `gosu`,
+  `sudoedit`, `setpriv`, blocked by default (opt out with `SHELL_GUARD_ALLOW_SUDO=1`;
+  see **Configure**). Also `find -exec`/`-ok` of a mutating command through a wrapper.
 - **System halt/reboot** — `reboot`, `shutdown`, `halt`, `poweroff`, `init 0`/`init 6`.
 - Anything in your `SHELL_GUARD_EXTRA_PATTERNS` (see **Configure**).
 
-Compound commands are split on `&&`, `||`, `;` and newlines and judged piece by piece,
-so `git pull && rm -rf /` is caught.
+Compound commands are split on `&&`, `||`, `;`, newlines, and — for the per-command
+checks — single pipes, background `&`, subshells `( )`, brace groups `{ }` and
+backtick substitution, so `git pull && rm -rf /`, `true | rm -rf /`, `(rm -rf /)` and
+`echo \`rm -rf /\`` are all caught. Common wrappers are unwrapped too: `timeout`,
+`setsid`, `nice`, `env`/`env -i`, `xargs`, and `bash -c "<script>"` (the `-c` string
+is re-checked). Best-effort, not a sandbox — a target supplied at runtime via stdin
+(`echo / | xargs rm -rf`), a two-step download-then-run, a hex/`$'\x..'`-encoded
+command name, or variable indirection can still hide a command.
 
 ## What it deliberately allows
 
@@ -98,7 +114,7 @@ command, so changes take effect immediately — no restart.
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `SHELL_GUARD_DISABLE` | *(unset)* | Set to `1` to pause the guard without uninstalling |
-| `SHELL_GUARD_ALLOW_SUDO` | *(unset)* | Set to `1` to permit `sudo` (blocked by default) |
+| `SHELL_GUARD_ALLOW_SUDO` | *(unset)* | Set to `1` to permit privilege escalation — `sudo`/`su`/`doas`/`runuser` (blocked by default) |
 | `SHELL_GUARD_EXTRA_PATTERNS` | *(unset)* | Extra ERE block patterns, `;`- or newline-separated |
 
 `SHELL_GUARD_EXTRA_PATTERNS` are raw regular expressions matched against each command
@@ -147,9 +163,13 @@ line in `~/.claude/shell-guard.conf`): the guard no-ops but stays installed.
 
 ## Limitations
 
-- **Best-effort shell parsing.** Exotic quoting, variable indirection, or `eval` can
-  hide an operation — this is a convenience guard, not a sandbox. Pair it with real
-  backups and OS-level protections for anything that matters.
+- **Best-effort shell parsing.** Common wrappers, pipes, subshells, backticks and
+  `bash -c` strings are handled, but a few classes are irreducible for a static
+  text guard and still pass: a destructive target supplied at **runtime via stdin**
+  (`echo / | xargs rm -rf`, `find / … | xargs rm`), a **two-step** download-then-run
+  (`curl -o /tmp/x …; bash /tmp/x`), a **hex/`$'\x..'`-encoded** command name, and
+  `eval`/variable indirection. This is a convenience guard, not a sandbox — pair it
+  with real backups and OS-level protections for anything that matters.
 - **Curated, not exhaustive.** It targets a high-confidence catastrophic set and stays
   out of the way of normal work; it will not catch every destructive command. Add your
   own via `SHELL_GUARD_EXTRA_PATTERNS`.

@@ -6,7 +6,14 @@
 
 input=$(cat)
 export LC_NUMERIC=C   # locale-proof printf '%.0f' on fractional percentages (uk_UA uses ',')
-cache_dir="${TMPDIR:-/tmp}"   # per-user temp dir on macOS (mode 700); avoids world-readable /tmp
+# Per-user, mode-700 cache dir. macOS $TMPDIR is already private, but on a shared
+# host with $TMPDIR unset the bare /tmp is world-readable: cache files hold prompt
+# snippets and the `>` writes follow symlinks, so a predictable /tmp path leaks
+# those snippets and invites a symlink-clobber. Keep the cache in a dir only we
+# own; if the path is hijacked (symlink / not a dir / not ours), use a throwaway.
+cache_dir="${TMPDIR:-/tmp}/claude-statusline-$(id -u)"
+{ mkdir -p "$cache_dir" && chmod 700 "$cache_dir"; } 2>/dev/null
+{ [ -d "$cache_dir" ] && [ ! -L "$cache_dir" ] && [ -O "$cache_dir" ]; } || cache_dir=$(mktemp -d)
 
 # single jq parse → one field per line. Empty-safe: a per-line `read` preserves empty
 # fields, whereas `IFS=$'\t' read` would collapse adjacent tabs and shift every field.

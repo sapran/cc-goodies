@@ -111,22 +111,33 @@ evaluate_segment() {
   set -- $seg
   [ $# -gt 0 ] || return 0
 
-  # Walk past benign prefixes until we hit `git`; bail if some other command.
+  # Walk past benign prefixes and command wrappers until we hit `git`; bail if some
+  # other command. Wrappers (timeout/setsid/xargs/…) are skipped so
+  # `timeout 60 git push origin main` is still judged.
   while [ $# -gt 0 ]; do
-    case "$1" in
+    case "${1##*/}" in
       git) shift; break ;;
-      *=*|sudo|command|exec|builtin|nice|nohup|time|env) shift ;;
-      *) return 0 ;;   # not a git invocation (e.g. `echo git push ...`)
+      timeout) shift; while [ $# -gt 0 ]; do case "$1" in -*) shift ;; *) shift; break ;; esac; done ;;
+      xargs)   shift; while [ $# -gt 0 ]; do case "$1" in -*) shift ;; *) break ;; esac; done ;;
+      sudo|command|exec|builtin|nice|nohup|time|env|setsid|stdbuf|ionice|chrt|then|do|else) shift ;;
+      *) case "$1" in *=*) shift ;; *) return 0 ;; esac ;;   # VAR=val prefix, else not git
     esac
   done
   [ $# -gt 0 ] || return 0   # bare `git`
 
   # Parse git's global options to find the subcommand and an optional `-C dir`.
-  cdir=""; verb=""
+  # `aliases` collects inline `-c alias.NAME=VERB` definitions so they can be
+  # resolved to the underlying verb below.
+  cdir=""; verb=""; aliases=""
   while [ $# -gt 0 ]; do
     case "$1" in
       -C) cdir="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-      -c) shift; [ $# -gt 0 ] && shift ;;
+      -c) cval="${2:-}"; shift; [ $# -gt 0 ] && shift
+          case "$cval" in
+            alias.*=*) an="${cval#alias.}"; an="${an%%=*}"
+                       av="${cval#*=}"; av="${av%% *}"   # first word of the expansion
+                       aliases="$aliases${aliases:+ }$an=$av" ;;
+          esac ;;
       --git-dir=*|--work-tree=*|--namespace=*) shift ;;
       --git-dir|--work-tree|--namespace) shift; [ $# -gt 0 ] && shift ;;
       -*) shift ;;
@@ -135,10 +146,46 @@ evaluate_segment() {
   done
   [ -n "$verb" ] || return 0
 
+  # Resolve an inline-defined alias (`git -c alias.up=push up …`) to its real verb,
+  # so the alias is judged as the action it performs. Persistent-config aliases in
+  # ~/.gitconfig can't be seen from here and remain a documented gap.
+  for amap in $aliases; do
+    case "$amap" in "$verb="*) verb="${amap#*=}"; break ;; esac
+  done
+
+  # `xtarget`, when set, names the branch a verb acts on explicitly (e.g.
+  # `branch -f main`) — judged by that branch's class rather than the current one.
+  xtarget=""
   case "$verb" in
-    commit|merge|pull|rebase) action="localwrite" ;;
-    push)                     action="push" ;;
-    *)                        return 0 ;;
+    commit|merge|pull|rebase|cherry-pick|revert|am) action="localwrite" ;;
+    push)                                           action="push" ;;
+    reset)
+      # Only a history-moving reset counts; `git reset <path>` (unstage) does not.
+      action=""
+      for a in "$@"; do case "$a" in --hard|--merge|--keep) action="localwrite" ;; esac; done
+      [ -n "$action" ] || return 0 ;;
+    branch)
+      # `branch -f|-D|-M <name>` force-resets / deletes / renames the named branch.
+      bforce=0
+      for a in "$@"; do case "$a" in -f|--force|-D|-M) bforce=1 ;; esac; done
+      [ "$bforce" = 1 ] || return 0
+      for a in "$@"; do case "$a" in -*) ;; *) xtarget="$a"; break ;; esac; done
+      [ -n "$xtarget" ] || return 0
+      action="localwrite" ;;
+    update-ref)
+      for a in "$@"; do case "$a" in -*) ;; *) xtarget="$a"; break ;; esac; done
+      xtarget="${xtarget#refs/heads/}"
+      [ -n "$xtarget" ] || return 0
+      action="localwrite" ;;
+    checkout|switch)
+      # `-B`/`-C` force-create-or-reset the named branch.
+      cforce=0; prev=""
+      for a in "$@"; do case "$a" in -B|-C) cforce=1 ;; esac; done
+      [ "$cforce" = 1 ] || return 0
+      for a in "$@"; do case "$prev" in -B|-C) xtarget="$a"; break ;; esac; prev="$a"; done
+      [ -n "$xtarget" ] || return 0
+      action="localwrite" ;;
+    *)                                              return 0 ;;
   esac
 
   # Resolve the target branch + its class.
@@ -162,19 +209,24 @@ evaluate_segment() {
     else
       target="__CURRENT__"           # `git push` or `git push <remote>`
     fi
+    target="${target//\"/}"; target="${target//\'/}"   # de-quote refspec (`"main"` -> main)
     case "$target" in
       __ALL__|__CURRENT__) ;;
       *:*) target="${target##*:}" ;; # src:dst (incl. :dst delete) -> dst
     esac
+    target="${target#+}"             # force-push shorthand: +main -> main
     target="${target#refs/heads/}"
 
     case "$target" in
-      __ALL__)     br="all branches"; tclass="MAIN" ;;      # includes protected
-      __CURRENT__) br="$(current_branch "${cdir:-$cwd}")"
-                   [ -n "$br" ] || return 0                 # not a repo -> git will fail
-                   tclass="$(class_of "$br")" ;;
-      *)           br="$target"; tclass="$(class_of "$br")" ;;
+      __ALL__)          br="all branches"; tclass="MAIN" ;;   # includes protected
+      __CURRENT__|HEAD) br="$(current_branch "${cdir:-$cwd}")" # HEAD pushes the current branch
+                        [ -n "$br" ] || return 0              # not a repo -> git will fail
+                        tclass="$(class_of "$br")" ;;
+      *)                br="$target"; tclass="$(class_of "$br")" ;;
     esac
+  elif [ -n "$xtarget" ]; then
+    xtarget="${xtarget//\"/}"; xtarget="${xtarget//\'/}"   # de-quote (`branch -f "main"`)
+    br="$xtarget"; tclass="$(class_of "$br")"   # verb names the branch explicitly
   else
     br="$(current_branch "${cdir:-$cwd}")"
     [ -n "$br" ] || return 0
@@ -198,14 +250,16 @@ evaluate_segment() {
   return 0
 }
 
-# Split the command on shell separators (&&, ||, ;) and physical newlines, then
-# judge each piece independently. Best-effort: exotic quoting can hide a verb,
-# which fails open — acceptable for a convenience guard, documented in README.
+# Split the command on shell separators — &&/|| first, then single | & ; and
+# subshell/brace ( ) { } — plus physical newlines, and judge each piece. This
+# keeps a `git` verb hidden behind a pipe, background, subshell or brace group
+# from slipping past. Best-effort: wrappers (timeout/xargs/bash -c), command
+# substitution, and aliases can still hide a verb — fail open, documented.
 while IFS= read -r seg; do
   [ -n "$seg" ] || continue
   evaluate_segment "$seg" || exit 2
 done <<EOF
-$(printf '%s\n' "$cmd" | awk '{gsub(/&&|\|\||;/,"\n")}1')
+$(printf '%s\n' "$cmd" | awk '{gsub(/&&|\|\|/,"\n"); gsub(/[|&;(){}]/,"\n")}1')
 EOF
 
 exit 0
