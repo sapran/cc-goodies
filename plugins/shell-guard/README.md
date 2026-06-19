@@ -48,8 +48,10 @@ Each is matched after normalising flags/spacing, not by naïve substring match:
 - **Overwrite a raw disk device** — a `>` redirect, or `dd of=`, `cp`, or `tee`
   whose target is `/dev/disk*`, `/dev/rdisk*`, `/dev/sd*`, `/dev/hd*`, `/dev/nvme*`,
   `/dev/vd*` (but **not** `/dev/null`, `/dev/zero`, a tty…).
-- **Recursive unlink without `rm`** — `find <protected path> … -delete`; `shred`
-  of a raw disk device or a protected path.
+- **Recursive unlink without `rm`** — `find <protected path> … -delete`, or
+  `find <protected path> … -exec` running a *mutating* command (rm/mv/chmod/shred/…);
+  a read-only `-exec grep/cat/ls/…` over a system dir is allowed. Also `shred` of a
+  raw disk device or a protected path.
 - **Fork bomb** — a function that pipes and backgrounds a call to itself
   (`:(){ :|:& };:` and renamed variants).
 - **Network download fed to an interpreter** — `curl`/`wget`/`fetch` reaching
@@ -61,8 +63,8 @@ Each is matched after normalising flags/spacing, not by naïve substring match:
   `--size=0` (but **not** a plain `> file` redirect, nor `: >> file` append).
 - **`chmod 777`** — world-writable permissions (`chmod 777` / `0777`, recursive or not).
 - **`eval`** — arbitrary code execution.
-- **`sudo`** — privilege escalation, blocked by default (opt out with
-  `SHELL_GUARD_ALLOW_SUDO=1`; see **Configure**).
+- **Privilege escalation** — `sudo`, `su`, `doas`, `runuser`, blocked by default
+  (opt out with `SHELL_GUARD_ALLOW_SUDO=1`; see **Configure**).
 - **System halt/reboot** — `reboot`, `shutdown`, `halt`, `poweroff`, `init 0`/`init 6`.
 - Anything in your `SHELL_GUARD_EXTRA_PATTERNS` (see **Configure**).
 
@@ -110,7 +112,7 @@ command, so changes take effect immediately — no restart.
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `SHELL_GUARD_DISABLE` | *(unset)* | Set to `1` to pause the guard without uninstalling |
-| `SHELL_GUARD_ALLOW_SUDO` | *(unset)* | Set to `1` to permit `sudo` (blocked by default) |
+| `SHELL_GUARD_ALLOW_SUDO` | *(unset)* | Set to `1` to permit privilege escalation — `sudo`/`su`/`doas`/`runuser` (blocked by default) |
 | `SHELL_GUARD_EXTRA_PATTERNS` | *(unset)* | Extra ERE block patterns, `;`- or newline-separated |
 
 `SHELL_GUARD_EXTRA_PATTERNS` are raw regular expressions matched against each command

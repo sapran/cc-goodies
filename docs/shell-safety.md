@@ -164,7 +164,7 @@ each piece, so `git pull && rm -rf /`, `true | rm -rf /` and `(rm -rf /)` are al
 - truncate a file to empty — the `: > file` idiom and `truncate -s 0`/`--size=0` (but not
   a plain `> file` redirect or `: >>` append);
 - `chmod 777`/`0777` (world-writable); `eval` (arbitrary code execution);
-- `sudo` — blocked by default (opt out with `SHELL_GUARD_ALLOW_SUDO=1`);
+- privilege escalation — `sudo`/`su`/`doas`/`runuser`, blocked by default (opt out with `SHELL_GUARD_ALLOW_SUDO=1`);
 - system halt/reboot — `reboot`, `shutdown`, `halt`, `poweroff`, `init 0`/`init 6`.
 
 **Deliberately allows** (so it doesn't break normal work): `rm -rf ./build`,
