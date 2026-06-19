@@ -54,17 +54,19 @@ Each is matched after normalising flags/spacing, not by naïve substring match:
   raw disk device or a protected path.
 - **Fork bomb** — a function that pipes and backgrounds a call to itself
   (`:(){ :|:& };:` and renamed variants).
-- **Network download fed to an interpreter** — `curl`/`wget`/`fetch` reaching
-  `sh`/`bash`/`zsh`/`dash`/`ksh`/`python`/`perl`/`ruby`/`node`/`php` through one or
-  more pipe stages (incl. via `sudo`/`env`/a `VAR=…` prefix), process substitution
-  (`bash <(curl …)`, `source <(curl …)`), or command substitution
+- **Network download fed to an interpreter** — `curl`/`wget`/`fetch` reaching a
+  shell or language runtime (`sh`/`bash`/`zsh`/`dash`/`ksh`/`pwsh`, `python`/`perl`/
+  `ruby`/`node`/`php`/`deno`/`bun`/`Rscript`/`lua`/`tclsh`/`osascript`) through one or
+  more pipe stages (incl. via `sudo`/`env`/`xargs`/a `VAR=…` prefix), process
+  substitution (`bash <(curl …)`, `source <(curl …)`), or command substitution
   (`bash -c "$(curl …)"`).
 - **Truncate a file to empty** — the `: > file` idiom and `truncate -s 0` /
   `--size=0` (but **not** a plain `> file` redirect, nor `: >> file` append).
 - **`chmod 777`** — world-writable permissions (`chmod 777` / `0777`, recursive or not).
 - **`eval`** — arbitrary code execution.
-- **Privilege escalation** — `sudo`, `su`, `doas`, `runuser`, blocked by default
-  (opt out with `SHELL_GUARD_ALLOW_SUDO=1`; see **Configure**).
+- **Privilege escalation** — `sudo`, `su`, `doas`, `runuser`, `pkexec`, `gosu`,
+  `sudoedit`, `setpriv`, blocked by default (opt out with `SHELL_GUARD_ALLOW_SUDO=1`;
+  see **Configure**). Also `find -exec`/`-ok` of a mutating command through a wrapper.
 - **System halt/reboot** — `reboot`, `shutdown`, `halt`, `poweroff`, `init 0`/`init 6`.
 - Anything in your `SHELL_GUARD_EXTRA_PATTERNS` (see **Configure**).
 
