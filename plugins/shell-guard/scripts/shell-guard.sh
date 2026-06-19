@@ -78,7 +78,7 @@ ALLOW_SUDO="${SHELL_GUARD_ALLOW_SUDO:-$(conf_get SHELL_GUARD_ALLOW_SUDO)}"
 # A download whose output reaches an interpreter — through any number of pipe
 # stages, an optional env/var/sudo prefix before the shell, and a wider set of
 # interpreters (sh/bash/zsh/dash/ksh + python/perl/ruby/node/php).
-NET_RE='(curl|wget|fetch)([^|]*\|)+[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+|env[[:space:]]+|sudo[[:space:]]+|xargs([[:space:]]+-[^[:space:]]+)*[[:space:]]+)*(sh|bash|zsh|dash|ksh|pwsh|python[0-9.]*|perl|ruby|node|php)([[:space:]]|-|$|[);&|}])'
+NET_RE='(curl|wget|fetch)([^|]*\|)+[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+|env[[:space:]]+|sudo[[:space:]]+|xargs([[:space:]]+-[^[:space:]]+)*[[:space:]]+)*(sh|bash|zsh|dash|ksh|pwsh|python[0-9.]*|perl|ruby|node|php|osascript|deno|bun|Rscript|tclsh|lua)([[:space:]]|-|$|[);&|}])'
 # Process substitution fed to an interpreter incl. source/. and a `< <(curl …)` stdin redirect.
 NETSUB_RE='(sh|bash|zsh|dash|ksh|source|\.)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*(<[[:space:]]*)?<\((curl|wget|fetch)'
 # Command substitution fed to an interpreter — `bash -c "$(curl …)"`, `python -c "$(curl …)"`.
@@ -157,7 +157,7 @@ eval_tokens() {
     case "$1" in */*) [ "${#1}" -lt 4096 ] && w="${1##*/}" || w="$1" ;; *) w="$1" ;; esac
     w="${w#\\}"; w="${w//\"/}"; w="${w//\'/}"
     case "$w" in
-      sudo|doas|su|runuser)   # privilege escalation — blocked by default
+      sudo|doas|su|runuser|pkexec|gosu|sudoedit|setpriv)   # privilege escalation — blocked by default
         if [ -z "${ALLOW_SUDO:-}" ] || [ "$ALLOW_SUDO" = "0" ]; then
           deny "$w — privilege escalation (set SHELL_GUARD_ALLOW_SUDO=1 to permit)"; return 2
         fi
@@ -216,18 +216,22 @@ eval_tokens() {
       # `find <protected path> … -delete`, or `-exec`/`-ok` running a *mutating*
       # command, recursively destroys like `rm -rf`. A read-only `-exec grep/cat/…`
       # over a system dir is ordinary recon, so the executed command is inspected.
-      fdestroy=0; fcata=0; prevf=""
+      fdestroy=0; fcata=0; inexec=0
       for a in "$@"; do
-        case "$prevf" in
-          -exec|-execdir|-ok|-okdir)
-            case "${a##*/}" in rm|rmdir|mv|chmod|chown|shred|dd|truncate|tee|unlink) fdestroy=1 ;; esac ;;
-        esac
+        if [ "$inexec" = 1 ]; then   # walk past wrappers to the command -exec actually runs
+          case "${a##*/}" in
+            env|nohup|setsid|stdbuf|ionice|nice|chrt|taskset|timeout|xargs|command|exec|sudo|doas|su|runuser) : ;;
+            *=*|-*|[0-9]*) : ;;      # VAR=val, a wrapper option, or a numeric positional
+            rm|rmdir|mv|chmod|chown|shred|dd|truncate|tee|unlink) fdestroy=1; inexec=0 ;;
+            *) inexec=0 ;;           # a read-only command (grep/cat/…): stop, not destructive
+          esac
+        fi
         case "$a" in
+          -exec|-execdir|-ok|-okdir) inexec=1 ;;
           -delete) fdestroy=1 ;;
           -*) : ;;
           *) is_cata_target "$a" && fcata=1 ;;
         esac
-        prevf="$a"
       done
       [ "$fdestroy" = 1 ] && [ "$fcata" = 1 ] && { deny "destructive find over a protected path"; return 2; }
       ;;
@@ -320,7 +324,7 @@ evaluate_segment() {
   # `bash -c "rm -rf /"` (or `timeout 5 bash -c "…"`) is judged like a normal command.
   # The option group accepts long options (`--norc`, `--rcfile /dev/null`) before -c.
   # A depth bound stops a deeply nested `bash -c bash -c …` from stalling the hook.
-  if [ "${SG_CDEPTH:-0}" -lt 8 ] && [[ "$seg" =~ (^|[^[:alnum:]_])(sh|bash|zsh|dash|ksh)[[:space:]]+([-A-Za-z0-9_/.]+[[:space:]]+)*-[A-Za-z]*c[[:space:]]+(.*)$ ]]; then
+  if [ "${SG_CDEPTH:-0}" -lt 8 ] && [[ "$seg" =~ (^|[^[:alnum:]_])(sh|bash|zsh|dash|ksh)[[:space:]]+([-A-Za-z0-9_/.=]+[[:space:]]+)*-[A-Za-z]*c[[:space:]]+(.*)$ ]]; then
     inner="${BASH_REMATCH[4]}"
     inner="${inner%\"}"; inner="${inner#\"}"; inner="${inner%\'}"; inner="${inner#\'}"
     if [ -n "$inner" ] && [ "$inner" != "$seg" ]; then
