@@ -1,0 +1,72 @@
+# git-guard behavioural cases. Columns (TAB-separated):
+#   id <TAB> branch <TAB> expect(0=allow|2=block) <TAB> command
+# `branch` is the branch the temp repo is checked out on for that case.
+# Lines starting with # and blank lines are ignored.
+# A few cases prefix an env var (GIT_GUARD_*=…) on the command; run.sh strips
+# and exports a leading VAR=val so the dev script sees it.
+#
+# --- BLOCK: local write while ON a protected branch -------------------------
+commit-on-main	main	2	git commit -m x
+merge-on-main	main	2	git merge feature
+rebase-on-main	main	2	git rebase develop
+pull-on-main	main	2	git pull
+cherrypick-on-main	main	2	git cherry-pick abc
+revert-on-main	main	2	git revert HEAD
+reset-hard-on-main	main	2	git reset --hard HEAD~1
+#
+# --- BLOCK: push whose target resolves to a protected branch ----------------
+push-origin-main	feature	2	git push origin main
+push-u-origin-main	feature	2	git push -u origin main
+push-head-colon-main	feature	2	git push origin HEAD:main
+push-plus-main	feature	2	git push origin +main
+push-delete-main	feature	2	git push origin :main
+push-quoted-main	feature	2	git push origin "main"
+push-all	feature	2	git push --all
+push-mirror	feature	2	git push --mirror
+push-bare-on-main	main	2	git push
+push-head-on-main	main	2	git push origin HEAD
+#
+# --- BLOCK: branch force ops onto a protected branch ------------------------
+branch-D-main	feature	2	git branch -D main
+branch-f-main	feature	2	git branch -f main other
+branch-M-main	feature	2	git branch -M main
+#
+# --- BLOCK: through common non-evasive wrappers -----------------------------
+timeout-push-main	feature	2	timeout 60 git push origin main
+nice-push-main	feature	2	nice git push origin main
+rtk-proxy-push-main	feature	2	rtk proxy git push origin main
+rtk-push-main	feature	2	rtk git push origin main
+envvar-push-main	feature	2	FOO=bar git push origin main
+sudo-push-main	feature	2	sudo git push origin main
+#
+# --- BLOCK: compound commands (split on shell separators) -------------------
+compound-and-push-main	feature	2	git add . && git push origin main
+compound-pipe-push-main	feature	2	true | git push origin main
+compound-subshell-push-main	feature	2	(git push origin main)
+#
+# --- BLOCK: block-all-push toggle (env var set for this case) ----------------
+blockall-push-feature	feature	2	GIT_GUARD_BLOCK_ALL_PUSH=1 git push origin feature/x
+#
+# --- ALLOW: writes on non-protected branches --------------------------------
+commit-on-develop	develop	0	git commit -m x
+push-develop	develop	0	git push origin develop
+push-feature	feature	0	git push origin feature/x
+push-feature-main-menu	feature	0	git push origin feature/main-menu
+#
+# --- ALLOW: read-only / non-mutating on protected branch --------------------
+reset-unstage-on-main	main	0	git reset HEAD~1 -- file.txt
+status-on-main	main	0	git status
+log-on-main	main	0	git log
+diff-on-main	main	0	git diff
+branch-D-oldfeature	main	0	git branch -D oldfeature
+echo-not-git	feature	0	echo "git push origin main"
+#
+# --- ALLOW: regression-locks (deliberately hidden git is out of scope) ------
+sudo-u-push-main	feature	0	sudo -u alice git push origin main
+bashc-push-main	feature	0	bash -c "git push origin main"
+inline-alias-push-main	feature	0	git -c alias.x=push x origin main
+update-ref-main	feature	0	git update-ref refs/heads/main HEAD
+checkout-B-main	feature	0	git checkout -B main
+#
+# --- ALLOW: disable toggle (env var set for this case) ----------------------
+disable-commit-on-main	main	0	GIT_GUARD_DISABLE=1 git commit -m x
