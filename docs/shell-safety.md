@@ -39,8 +39,8 @@ one layer is covered by another.
 |------|-----------|-------------|-------|---------|--------|
 | **0. Plan mode** | Human confirmation before any tool runs | Harness (`defaultMode`) | closed (asks) | *everything*, incl. the long tail | nothing — but relies on you reading the command |
 | **1. Deny list** | Exact string match on the command | Harness (`permissions.deny`) | closed (blocks) | a fixed, enumerated set | re-ordered flags, quoting, variables, anything not listed |
-| **2. git-guard** | Parses the git verb + resolves the branch | Plugin PreToolUse hook | **open** (allows if `jq` missing) | commit/merge/pull/rebase/push onto protected branches | exotic quoting; non-git destructive ops |
-| **3. shell-guard** | Normalizes flags + resolves the target | Plugin PreToolUse hook | **open** (allows if `jq` missing) | a curated dangerous-command set (covers a typical shell deny list) | anything outside that set; heavy obfuscation |
+| **2. git-guard** | Parses the git verb + resolves the branch | Plugin PreToolUse hook | **open** (allows if `jq` missing) | commit/merge/pull/rebase/reset/push that lands on a protected branch (plain forms) | deliberately hidden git (`bash -c`, `$()`, `sudo -u USER`, gitconfig aliases); non-git ops |
+| **3. shell-guard** | Resolves the target + skips common wrappers | Plugin PreToolUse hook | **open** (allows if `jq` missing) | a small catastrophic-command set (covers a typical shell deny list) | deliberately hidden forms (option-value wrapping, `bash -c`, encoding, stdin targets) |
 | **4. Advisory rules** | Reasoning from `~/.claude/rules/*.md` | The agent (not enforced) | n/a | judgment calls: obfuscation, piping remote→shell, prompt injection, secrets on the CLI | anything the agent overlooks or is told to ignore |
 
 > `rtk-hook` is **not** a security layer — it is a token optimizer that rewrites
@@ -111,25 +111,21 @@ closes by normalizing the flags and resolving the target instead of matching a s
 
 ### Layer 2 — git-guard (protected branches)
 
-A `PreToolUse`/`Bash` hook that **parses the git command** — walking past prefixes
-(`sudo`, `env`, var-assignments), reading global options (`-C`, `-c`, …), extracting the
-verb, and resolving the branch — then blocks (exit 2) when the active policy forbids it.
+A `PreToolUse`/`Bash` hook that **parses the git command** — walking past common prefixes
+(`sudo`, `env`, var-assignments, `rtk proxy`), reading global options (`-C`, …),
+extracting the verb, and resolving the branch — then blocks (exit 2) when the action would
+land on a protected branch.
 
-- **Guarded verbs:** `commit`, `merge`, `pull`, `rebase`, `cherry-pick`, `revert`,
-  `am`, and a history-moving `reset --hard|--merge|--keep` (judged against the
-  **current** branch); `branch -f`, `update-ref`, `checkout/switch -B` (judged against
-  the **named** branch); and `push` (judged against the resolved target refspec,
-  including the `+force` shorthand and `HEAD`). Inline `-c alias.*=` is resolved.
-- **Policies** (`GIT_GUARD_POLICY`, default `2`):
-
-  | Policy | Push → main | Commit/pull/rebase → main | Push → develop | …→ develop |
-  |:------:|:-----------:|:-------------------------:|:--------------:|:----------:|
-  | **1** | ⛔ | ✅ | ✅ | ✅ |
-  | **2** (default) | ⛔ | ⛔ | ✅ | ✅ |
-  | **3** | ⛔ | ⛔ | ⛔ *(all pushes)* | ✅ |
-
-- **Config:** env → `~/.claude/git-guard.conf` → default. Protected/dev branch lists and
-  the policy are all configurable; `GIT_GUARD_DISABLE=1` pauses it.
+- **Guarded verbs:** `commit`, `merge`, `pull`, `rebase`, `cherry-pick`, `revert`, `am`,
+  and a history-moving `reset --hard|--merge|--keep` (judged against the **current**
+  branch); `branch -D|-f|-M` (judged against the **named** branch); and `push` (judged
+  against the resolved target refspec, including the `+force` shorthand, `HEAD`, and a
+  `:branch` delete).
+- **Behaviour:** by default, block a local write while on a protected branch and any push
+  whose target is protected; `GIT_GUARD_BLOCK_ALL_PUSH=1` additionally blocks **every**
+  push (for a strictly local-only workflow). The protected-branch list
+  `GIT_GUARD_MAIN_BRANCHES` (default `main master`) is configurable.
+- **Config:** env → `~/.claude/git-guard.conf` → default; `GIT_GUARD_DISABLE=1` pauses it.
 - **Fails open** if `jq` is missing (prints one line, allows the command) — a guard that
   blocked every Bash call on a missing dependency would be worse than none.
 
@@ -139,9 +135,9 @@ Full detail and the override paths: [git-guard README](../plugins/git-guard/READ
 
 ### Layer 3 — shell-guard (dangerous commands)
 
-A `PreToolUse`/`Bash` hook that hard-blocks (exit 2) a **curated set** of dangerous
-commands. Unlike Layer 1 it normalizes flags/spacing and resolves the target, catching the
-obfuscated variants the string list misses. It splits compound commands on `&&`, `||`, `;`,
+A `PreToolUse`/`Bash` hook that hard-blocks (exit 2) a **small catastrophic set** of
+commands. Unlike Layer 1 it resolves the target and skips common wrappers, catching
+re-ordered-flag variants the string list misses. It splits compound commands on `&&`, `||`, `;`,
 newlines, single pipes, background `&`, subshells `( )` and brace groups `{ }`, and judges
 each piece, so `git pull && rm -rf /`, `true | rm -rf /` and `(rm -rf /)` are all caught.
 
@@ -151,30 +147,29 @@ each piece, so `git pull && rm -rf /`, `true | rm -rf /` and `(rm -rf /)` are al
   (any order) targeting `/`, `/*`, `~`, `$HOME`, a top-level system dir (`/usr`, `/etc`,
   `/System`, …), or — only when the session cwd **is** `$HOME` — a bare `*`/`.*`/`.`; and
   any `rm --no-preserve-root`;
-- `dd … of=/dev/…`; `mkfs`/`mkfs.*`/`wipefs`/`newfs`; destructive `diskutil`
-  (`eraseDisk`, `reformat`, `zeroDisk`, …);
-- redirect onto a raw disk device (`> /dev/disk*`, `/dev/rdisk*`, `/dev/sd*`, … — **not**
-  `/dev/null`/`zero`/tty);
+- `dd … of=/dev/disk*` (a raw disk device, **not** `/dev/null`); `mkfs`/`mkfs.*`/`wipefs`/
+  `newfs`; destructive `diskutil` (`eraseDisk`, `reformat`, `zeroDisk`, …);
+- a `>` redirect onto a raw disk device (`/dev/disk*`, `/dev/rdisk*`, `/dev/sd*`, … —
+  **not** `/dev/null`/`zero`/tty);
 - fork bombs (a function that pipes and backgrounds a call to itself);
-- a network download fed to an interpreter (`curl`/`wget`/`fetch` → `sh`/`bash`/`zsh`/
-  `dash`/`ksh`/`python`/`perl`/`ruby`/`node`/`php`) through one or more pipe stages, an
-  `env`/`VAR=…`/`sudo` prefix, process substitution (`bash <(curl …)`, `source <(curl …)`)
-  or command substitution (`bash -c "$(curl …)"`); plus `find … -delete`, `shred`,
-  `cp`/`tee` and `diskutil apfs delete*` against a raw disk or protected path;
-- truncate a file to empty — the `: > file` idiom and `truncate -s 0`/`--size=0` (but not
-  a plain `> file` redirect or `: >>` append);
+- a network download fed to an interpreter — a `curl`/`wget`/`fetch` pipeline stage
+  followed by `sh`/`bash`/`zsh`/`dash`/`ksh`/`python`/`perl`/`ruby`/`node`/`php`, e.g.
+  `curl … | bash` (matched by pipeline stage, so a quoted `echo "curl … | bash"` is not a
+  false positive);
+- the `: > file` truncate-to-empty idiom (but not a plain `> file` redirect or `: >>`
+  append);
 - `chmod 777`/`0777` (world-writable); `eval` (arbitrary code execution);
-- privilege escalation — `sudo`/`su`/`doas`/`runuser`, blocked by default (opt out with `SHELL_GUARD_ALLOW_SUDO=1`);
-- system halt/reboot — `reboot`, `shutdown`, `halt`, `poweroff`, `init 0`/`init 6`.
+- privilege escalation — `sudo`/`su`/`doas`/`runuser`/`pkexec`/…;
+- system halt/reboot — `reboot`, `shutdown`, `halt`, `poweroff`.
 
 **Deliberately allows** (so it doesn't break normal work): `rm -rf ./build`,
 `rm -rf node_modules`, deep paths under a system dir (`/usr/local/lib/...`),
-`rm -rf *` *outside* `$HOME`, `dd … of=file`, `curl … | jq`, `curl … | ssh host`,
-`echo "rm -rf /"`.
+`rm -rf *` *outside* `$HOME`, `dd … of=file`, `dd … of=/dev/null`, `curl … | jq`,
+`curl … | ssh host`, `echo "rm -rf /"`, and the dropped arms `find … -delete`, `shred`,
+`truncate -s 0`, `cp … /dev/disk*`, `init 0`.
 
 - **Config:** env → `~/.claude/shell-guard.conf` → default. `SHELL_GUARD_DISABLE=1`
-  pauses it; `SHELL_GUARD_ALLOW_SUDO=1` permits `sudo`; `SHELL_GUARD_EXTRA_PATTERNS` adds
-  your own ERE block patterns.
+  pauses it; `SHELL_GUARD_EXTRA_PATTERNS` adds your own ERE block patterns.
 - **Fails open** if `jq` is missing.
 
 Full list, allow-cases, and limitations: [shell-guard README](../plugins/shell-guard/README.md).
@@ -205,7 +200,7 @@ mode + the deny list.
 
 Tune to taste:
 
-- Stricter git: `/git-guard` → policy 3 (no pushing anywhere from a session).
+- Stricter git: `/git-guard` → set `GIT_GUARD_BLOCK_ALL_PUSH=1` (no pushing anywhere from a session).
 - Extra shell patterns: `/shell-guard` → add to `SHELL_GUARD_EXTRA_PATTERNS`.
 - Pause without uninstalling: `GIT_GUARD_DISABLE=1` / `SHELL_GUARD_DISABLE=1`.
 
@@ -222,14 +217,13 @@ ever gate Claude's Bash tool, never your own shell.
 - **shell-guard is curated, not exhaustive.** It targets a high-confidence catastrophic
   set and stays out of the way of ordinary work; it will not catch every destructive
   command. Add your own via `SHELL_GUARD_EXTRA_PATTERNS`.
-- **Best-effort shell parsing.** Pipes, `&`, subshells, brace groups, backticks,
-  common wrappers (`timeout`/`nice`/`sudo`/`env`/`xargs`/`setsid`/…) **with their
-  options and option values**, and `bash -c "…"` strings are now handled, but a few
-  classes are irreducible for a static text guard: a target supplied at runtime via
-  **stdin** (`… | xargs rm`), a **two-step** download-then-run, a
-  **hex/`$'\x..'`-encoded** command name, `eval`/variable indirection, a
-  **persistent/shell `~/.gitconfig` alias**, and a rare value-taking wrapper option
-  outside the table (`exec -a`, `time -o`, `su -c`). Layer 0 (plan mode) remains the backstop.
+- **Accidents, not evasion — by design.** The hooks split compound commands and skip
+  common, non-evasive wrappers, but they match *plain* command forms only. Anything
+  deliberately hidden — an option-value-wrapped command (`timeout -s KILL 5 …`), a
+  `bash -c "…"`/`$()` string, a `$'\x..'`-encoded name, a target piped in via **stdin**,
+  a two-step download-then-run, `eval`/variable indirection, or a `~/.gitconfig` alias —
+  passes through. A static text hook cannot win that race; chasing it is what bloated the
+  previous versions. Layer 0 (plan mode) is the backstop.
 - **`rm -rf *` is only caught in `$HOME`.** Elsewhere the guard can't know what `*`
   expands to, so it allows it (blocking every `rm -rf *` would break normal build work).
 - **Not a sandbox, not server-side.** Pair with backups and GitHub/GitLab branch

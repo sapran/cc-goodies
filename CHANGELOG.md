@@ -9,20 +9,21 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ### Added
 
-- **`shell-guard` plugin** — a `PreToolUse`/`Bash` hook that hard-blocks (exit 2) a
-  curated set of dangerous shell commands before they run: recursive deletes of `/`,
-  `$HOME`/`~`, or a top-level system directory (and any `--no-preserve-root`); `dd` onto
-  a `/dev` device; `mkfs`/`wipefs`/`newfs`; destructive `diskutil`; redirects onto a raw
-  disk device; fork bombs; network downloads piped into a shell (`curl|sh`); truncating a
-  file to empty (`: >`, `truncate -s0`); `chmod 777`; `eval`; `sudo` (default-on, opt out
-  with `SHELL_GUARD_ALLOW_SUDO=1`); and system halt/reboot
-  (`reboot`/`shutdown`/`halt`/`poweroff`/`init 0|6`). Designed to cover — and improve on —
-  a typical shell `permissions.deny` list: it normalizes flags/spacing and resolves the
-  target, catching obfuscated variants string-matching misses, while deliberately allowing
-  ordinary work (`rm -rf ./build`, `dd … of=file`, `curl|jq`, `git init`, plain `> file`
-  redirects, `chmod 755`). Configurable via `~/.claude/shell-guard.conf`
-  (`SHELL_GUARD_DISABLE`, `SHELL_GUARD_ALLOW_SUDO`, `SHELL_GUARD_EXTRA_PATTERNS`) through
-  `/shell-guard`, with a matching `/shell-guard-uninstall`. Fails open if `jq` is missing.
+- **`shell-guard` plugin** — a `PreToolUse`/`Bash` hook that hard-blocks (exit 2) a small
+  set of *catastrophic* shell commands before they run: recursive deletes of `/`,
+  `$HOME`/`~`, or a top-level system directory (and any `--no-preserve-root`); `dd` or a
+  `>` redirect onto a raw disk device; `mkfs`/`wipefs`/`newfs`; destructive `diskutil`;
+  fork bombs; a network download piped into an interpreter (`curl|sh`); the `: >`
+  truncate-to-empty idiom; `chmod 777`; `eval`; privilege escalation (`sudo`/`doas`/…);
+  and system halt/reboot (`reboot`/`shutdown`/`halt`/`poweroff`). It resolves the target
+  and skips common wrappers, catching re-ordered-flag variants a string list misses, while
+  deliberately allowing ordinary work (`rm -rf ./build`, `dd … of=file`, `dd … of=/dev/null`,
+  `curl|jq`, `git init`, plain `> file` redirects, `chmod 755`). Scope is plain-form
+  accidents — deliberate evasion (option-value wrapping, `bash -c`, encoding, `eval`
+  indirection) is out of scope by design, with plan mode the backstop. Configurable via
+  `~/.claude/shell-guard.conf` (`SHELL_GUARD_DISABLE`, `SHELL_GUARD_EXTRA_PATTERNS`)
+  through `/shell-guard`, with a matching `/shell-guard-uninstall`. Fails open if `jq` is
+  missing.
 - **`rtk-hook` plugin** — wires RTK (Rust Token Killer) as a managed `PreToolUse`/`Bash`
   hook instead of a hand-wired `settings.json` entry. The wrapper execs `rtk hook claude`
   when `rtk` is on `PATH` and no-ops (exit 0) otherwise, so it's safe to install without
@@ -59,24 +60,15 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ### Changed
 
-- **`git-guard`** now guards `git pull` and `git rebase` in addition to
-  `commit`/`merge`/`push`. Both mutate the current branch like a commit, so they are
-  treated as local writes: blocked on protected branches under policy 2 (default) and 3,
-  allowed on dev/feature branches, and never blocked under policy 1.
-
-### Fixed
-
-- **`git-guard` & `shell-guard` — wrapper / flag bypass hardening (round 5).** Both
-  guards now consume a command wrapper's *options and their values*, closing a class of
-  bypasses where a wrapper argument was mistaken for the wrapped command. Newly blocked
-  in git-guard: `nice -n 5 git push origin main`, `timeout -s KILL 60 git push …`,
-  `sudo -u alice git push …`, `env -i …`, and `chrt`/`ionice`/`taskset`/`stdbuf`/`xargs`
-  forms; in shell-guard: `timeout -s KILL 5 rm -rf /`, `xargs -n 1 rm -rf /`, and
-  `find / -exec timeout -s KILL 5 rm {} +`. git-guard additionally skips push value-flag
-  values (`-o`/`--push-option`/`--receive-pack`/`--exec`) so they can't masquerade as the
-  remote/refspec, skips `update-ref -m <msg>`, and catches `git branch -m|-c` renaming or
-  copying onto **or** off a protected branch. Remaining residuals (`exec -a NAME`,
-  `time -o FILE`, `su -c "<cmd>"`) are documented.
+- **`git-guard`** simplified to one built-in behaviour plus one optional toggle: block a
+  local write (`commit`/`merge`/`pull`/`rebase`/`cherry-pick`/`revert`/`am` and a
+  history-moving `reset --hard|--merge|--keep`) while **on** a protected branch, and block
+  any **push** whose resolved target is protected; `GIT_GUARD_BLOCK_ALL_PUSH=1` also blocks
+  every push. Replaces the previous `1`/`2`/`3` policy selector and the separate
+  `GIT_GUARD_DEV_BRANCHES` list. Also guards `branch -D|-f|-M <protected>`, recognises the
+  `rtk proxy git …` prefix, and unwraps common non-evasive wrappers. Deliberately hidden
+  git (`bash -c "…"`, command substitution, `sudo -u USER git`, gitconfig aliases) is out
+  of scope by design; plan mode is the backstop.
 
 ## [0.1.0]
 

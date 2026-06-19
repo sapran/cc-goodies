@@ -23,12 +23,12 @@
     {
       "name": "git-guard",
       "source": "./plugins/git-guard",
-      "description": "Block accidental commits, merges and pushes to protected branches (main/master) before they run. Selectable policies, configurable branch lists."
+      "description": "Block accidental commits, merges and pushes to protected branches (main/master) before they run. Configurable protected branches; optional block-all-push mode."
     },
     {
       "name": "shell-guard",
       "source": "./plugins/shell-guard",
-      "description": "Block a curated set of dangerous shell commands (rm -rf / or ~, dd to a disk, mkfs, fork bombs, curl|sh, file truncation, chmod 777, eval, sudo, reboot/shutdown) before they run. Covers a typical shell deny list; fail-open, configurable."
+      "description": "Block a small set of catastrophic shell commands (rm -rf / or ~, dd/redirect to a disk, mkfs, fork bombs, curl|sh, chmod 777, eval, sudo, reboot/shutdown) before they run. Catches plain-form accidents; fail-open, configurable."
     },
     {
       "name": "rtk-hook",
