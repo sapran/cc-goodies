@@ -8,6 +8,18 @@ Claude is told why — instead of finding out after `main` already moved.
 It only ever gates **Claude's Bash tool**. You can still run any command yourself
 in a terminal.
 
+## What a block looks like
+
+When the active policy forbids a command, the hook exits 2 and Claude sees this on
+stderr (so it stops and tells you, instead of `main` moving). For `git push origin main`
+under the default policy 2:
+
+```text
+⛔ git-guard (policy 2): blocked push to protected branch 'main'.
+   Protected: main master. Use a feature branch or 'develop'.
+   Override: run it yourself in a terminal, set GIT_GUARD_DISABLE=1, or see /git-guard.
+```
+
 ## Policies
 
 Pick how strict you want it with `GIT_GUARD_POLICY` (default **2**):

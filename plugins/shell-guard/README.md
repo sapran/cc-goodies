@@ -9,6 +9,20 @@ Claude is told why — instead of finding out afterwards.
 It only ever gates **Claude's Bash tool**. You can still run any command yourself in
 a terminal.
 
+## What a block looks like
+
+When a command matches, the hook exits 2 and Claude sees this on stderr (so it stops
+and reports back instead of running it). For `rm -rf ~`:
+
+```text
+⛔ shell-guard: blocked a dangerous command — recursive delete of a protected path.
+   If you really mean it, run it yourself in a terminal, set
+   SHELL_GUARD_DISABLE=1, or see /shell-guard.
+```
+
+The text after the dash names the matched rule (e.g. `network download piped into a
+shell`, `dd onto a device node`, `sudo — privilege escalation`).
+
 shell-guard is designed to **cover — and improve on — a typical `permissions.deny`
 shell list** in `~/.claude/settings.json`. That list matches command *strings* exactly,
 so it misses re-ordered flags, extra spaces, or `$HOME` in place of `~`; shell-guard
