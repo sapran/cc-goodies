@@ -58,6 +58,41 @@ Reverse of install — undo any wiring or config first, then remove the plugins 
 
 Each plugin's dedicated uninstall only undoes what its install added and refuses to touch anything you configured yourself. voice-notify, session-finalise and project-scope write nothing outside their plugin directories, so `/plugin uninstall` removes them completely. Run `/hooks` or restart afterwards.
 
+## Install / uninstall everything (shell)
+
+Prefer the terminal? These do the same as the per-plugin steps above, in one shot — plain `claude plugins` CLI, one line each.
+
+**Install everything:**
+
+```bash
+claude plugins marketplace add sapran/cc-goodies
+claude plugins install voice-notify@cc-goodies
+claude plugins install statusline@cc-goodies
+claude plugins install git-guard@cc-goodies
+claude plugins install shell-guard@cc-goodies
+claude plugins install rtk-hook@cc-goodies
+claude plugins install session-finalise@cc-goodies
+claude plugins install project-scope@cc-goodies
+```
+
+Then, inside Claude, wire the statusline (the CLI can't set the `statusLine` key): `/statusline-install`. RTK is a separate prerequisite (`brew install rtk`); `/rtk-hook-install` is an optional cleanup.
+
+**Remove everything:**
+
+```bash
+claude plugins uninstall statusline@cc-goodies
+claude plugins uninstall git-guard@cc-goodies
+claude plugins uninstall shell-guard@cc-goodies
+claude plugins uninstall rtk-hook@cc-goodies
+claude plugins uninstall session-finalise@cc-goodies
+claude plugins uninstall project-scope@cc-goodies
+claude plugins uninstall voice-notify@cc-goodies
+claude plugins marketplace remove cc-goodies
+rm -f ~/.claude/git-guard.conf ~/.claude/shell-guard.conf
+```
+
+Uninstalling the plugins removes their hooks too (hooks are declared inline in each `plugin.json`). If you wired the statusline, run `/statusline-uninstall` inside Claude first to drop the `statusLine` key it added. The `rm -f` clears the two guard config files, which exist only if you customised those guards.
+
 ## Requirements
 
 - **macOS** — voice-notify uses the built-in `say`; the statusline uses a few BSD tools.
