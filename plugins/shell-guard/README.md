@@ -67,10 +67,13 @@ Each is matched after normalising flags/spacing, not by naïve substring match:
 - Anything in your `SHELL_GUARD_EXTRA_PATTERNS` (see **Configure**).
 
 Compound commands are split on `&&`, `||`, `;`, newlines, and — for the per-command
-checks — single pipes, background `&`, subshells `( )` and brace groups `{ }`, so
-`git pull && rm -rf /`, `true | rm -rf /` and `(rm -rf /)` are all caught. Wrappers
-(`timeout`, `xargs`, `bash -c "…"`), backtick substitution and variable indirection
-can still hide a command — best-effort, not a sandbox.
+checks — single pipes, background `&`, subshells `( )`, brace groups `{ }` and
+backtick substitution, so `git pull && rm -rf /`, `true | rm -rf /`, `(rm -rf /)` and
+`echo \`rm -rf /\`` are all caught. Common wrappers are unwrapped too: `timeout`,
+`setsid`, `nice`, `env`/`env -i`, `xargs`, and `bash -c "<script>"` (the `-c` string
+is re-checked). Best-effort, not a sandbox — a target supplied at runtime via stdin
+(`echo / | xargs rm -rf`), a two-step download-then-run, a hex/`$'\x..'`-encoded
+command name, or variable indirection can still hide a command.
 
 ## What it deliberately allows
 
@@ -156,9 +159,13 @@ line in `~/.claude/shell-guard.conf`): the guard no-ops but stays installed.
 
 ## Limitations
 
-- **Best-effort shell parsing.** Exotic quoting, variable indirection, or `eval` can
-  hide an operation — this is a convenience guard, not a sandbox. Pair it with real
-  backups and OS-level protections for anything that matters.
+- **Best-effort shell parsing.** Common wrappers, pipes, subshells, backticks and
+  `bash -c` strings are handled, but a few classes are irreducible for a static
+  text guard and still pass: a destructive target supplied at **runtime via stdin**
+  (`echo / | xargs rm -rf`, `find / … | xargs rm`), a **two-step** download-then-run
+  (`curl -o /tmp/x …; bash /tmp/x`), a **hex/`$'\x..'`-encoded** command name, and
+  `eval`/variable indirection. This is a convenience guard, not a sandbox — pair it
+  with real backups and OS-level protections for anything that matters.
 - **Curated, not exhaustive.** It targets a high-confidence catastrophic set and stays
   out of the way of normal work; it will not catch every destructive command. Add your
   own via `SHELL_GUARD_EXTRA_PATTERNS`.

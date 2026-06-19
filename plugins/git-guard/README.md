@@ -91,7 +91,9 @@ Target branches are resolved properly, not by substring matching:
 
 - `git push origin main`, `git push -u origin main`, `git push origin HEAD:main`,
   `git push origin HEAD:refs/heads/main`, the force shorthand `git push origin +main`,
-  and `git push origin HEAD` (current branch) → all resolve to `main`.
+  the quoted `git push origin "main"`, and `git push origin HEAD` (current branch)
+  → all resolve to `main`.
+- Common wrappers are unwrapped — `timeout 60 git push …`, `setsid git push …`.
 - `git push --all` / `--mirror` → treated as touching protected branches.
 - `git push origin :main` (delete remote `main`) → blocked.
 - `git commit` / `merge` / `pull` / `rebase` / `cherry-pick` / `revert` / `am`, and
@@ -116,10 +118,11 @@ Target branches are resolved properly, not by substring matching:
   session sits on an unprotected branch, miss a write to another repo's `main`. Use
   the `git -C /path …` form for another repo — that **is** resolved correctly. Working
   normally inside the repo is fully covered.
-- **Best-effort shell parsing.** Inline `-c alias.*=` definitions are resolved, but a
-  `git` verb hidden behind a wrapper (`timeout`, `xargs`, `bash -c "…"`), backtick
-  substitution, or a **persistent** alias from `~/.gitconfig` can still slip through —
-  this is a convenience guard, not a server-side branch protection. Pair it with real
+- **Best-effort shell parsing.** Common wrappers (`timeout`, `setsid`, `xargs`) and
+  inline `-c alias.*=` definitions are resolved, but a `git` verb hidden inside a
+  `bash -c "…"` string, backtick/`$()` command substitution, or a **persistent** or
+  **shell (`!cmd`)** alias from `~/.gitconfig` can still slip through — this is a
+  convenience guard, not a server-side branch protection. Pair it with real
   protections (GitHub branch rules) for anything that matters.
 - **Requires `jq`** to parse the hook input. If `jq` is missing the guard prints a
   one-line warning and **allows** the command (it fails open rather than blocking

@@ -222,10 +222,12 @@ ever gate Claude's Bash tool, never your own shell.
 - **shell-guard is curated, not exhaustive.** It targets a high-confidence catastrophic
   set and stays out of the way of ordinary work; it will not catch every destructive
   command. Add your own via `SHELL_GUARD_EXTRA_PATTERNS`.
-- **Best-effort shell parsing.** Pipes, `&`, subshells and brace groups are now split,
-  but a command hidden behind a wrapper (`timeout`, `xargs`, `bash -c "…"`), backtick
-  substitution, `eval`, a persistent `~/.gitconfig` alias, or variable indirection can
-  still hide an operation from the hook layers.
+- **Best-effort shell parsing.** Pipes, `&`, subshells, brace groups, backticks,
+  common wrappers (`timeout`/`setsid`/`env`/`xargs`) and `bash -c "…"` strings are
+  now handled, but a few classes are irreducible for a static text guard: a target
+  supplied at runtime via **stdin** (`… | xargs rm`), a **two-step** download-then-run,
+  a **hex/`$'\x..'`-encoded** command name, `eval`/variable indirection, and a
+  **persistent/shell `~/.gitconfig` alias**. Layer 0 (plan mode) remains the backstop.
 - **`rm -rf *` is only caught in `$HOME`.** Elsewhere the guard can't know what `*`
   expands to, so it allows it (blocking every `rm -rf *` would break normal build work).
 - **Not a sandbox, not server-side.** Pair with backups and GitHub/GitLab branch
