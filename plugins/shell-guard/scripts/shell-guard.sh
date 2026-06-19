@@ -131,6 +131,17 @@ is_cata_target() {
   return 1
 }
 
+# Does this argument name a raw disk device? Quotes are stripped first so a
+# quoted target (`"/dev/disk0"`) is still caught. Keep the device list in sync
+# with DEV_RE (the `>`-redirect variant) above.
+is_raw_disk() {
+  dev="${1//\"/}"; dev="${dev//\'/}"
+  case "$dev" in
+    /dev/disk*|/dev/rdisk*|/dev/sd*|/dev/hd*|/dev/nvme*|/dev/vd*) return 0 ;;
+  esac
+  return 1
+}
+
 # Evaluate the tokenised command word of ONE pipeline stage. Returns 2 to block.
 eval_tokens() {
   # shellcheck disable=SC2086
@@ -237,20 +248,14 @@ eval_tokens() {
       ;;
     shred)
       for a in "$@"; do
-        na="${a//\"/}"; na="${na//\'/}"
-        case "$na" in
-          /dev/disk*|/dev/rdisk*|/dev/sd*|/dev/hd*|/dev/nvme*|/dev/vd*) deny "shred a raw disk device"; return 2 ;;
-        esac
+        is_raw_disk "$a" && { deny "shred a raw disk device"; return 2; }
         is_cata_target "$a" && { deny "shred of a protected path"; return 2; }
       done
       ;;
     cp|tee)
       # Overwriting a raw disk device via cp/tee (not just dd/redirect).
       for a in "$@"; do
-        na="${a//\"/}"; na="${na//\'/}"
-        case "$na" in
-          /dev/disk*|/dev/rdisk*|/dev/sd*|/dev/hd*|/dev/nvme*|/dev/vd*) deny "$c onto a raw disk device"; return 2 ;;
-        esac
+        is_raw_disk "$a" && { deny "$c onto a raw disk device"; return 2; }
       done
       ;;
     diskutil)

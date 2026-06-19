@@ -250,16 +250,16 @@ evaluate_segment() {
   return 0
 }
 
-# Split the command on shell separators — &&/|| first, then single | & ; and
-# subshell/brace ( ) { } — plus physical newlines, and judge each piece. This
-# keeps a `git` verb hidden behind a pipe, background, subshell or brace group
-# from slipping past. Best-effort: wrappers (timeout/xargs/bash -c), command
-# substitution, and aliases can still hide a verb — fail open, documented.
+# Split the command on shell separators — single | & ; and subshell/brace
+# ( ) { } (which also covers && and ||) — plus physical newlines, and judge each
+# piece. This keeps a `git` verb hidden behind a pipe, background, subshell or
+# brace group from slipping past. Best-effort: wrappers (timeout/xargs/bash -c),
+# command substitution, and aliases can still hide a verb — fail open, documented.
 while IFS= read -r seg; do
   [ -n "$seg" ] || continue
   evaluate_segment "$seg" || exit 2
 done <<EOF
-$(printf '%s\n' "$cmd" | awk '{gsub(/&&|\|\|/,"\n"); gsub(/[|&;(){}]/,"\n")}1')
+$(printf '%s\n' "$cmd" | awk '{gsub(/[|&;(){}]/,"\n")}1')
 EOF
 
 exit 0
