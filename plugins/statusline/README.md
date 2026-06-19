@@ -8,7 +8,7 @@ Opus 4.8 (xhigh)  c:42%  s:18%  w:5%
 ```
 
 - **Line 1:** `user@host`, compressed cwd, git branch (or worktree), and the session's first task → latest request.
-- **Line 2:** model, effort level, context-window %, and 5-hour / 7-day rate-limit usage.
+- **Line 2:** model, effort level, then three usage gauges — `c:` context window used, `s:` 5-hour session rate-limit, `w:` 7-day (weekly) rate-limit. The `s:`/`w:` gauges appear only once Claude Code reports rate-limit data.
 
 Tuned for speed: a single `jq` parse, bounded transcript reads, and short-lived caches for the git branch and "latest message" lookups.
 
@@ -25,7 +25,10 @@ Run `/hooks` or restart for it to take effect.
 
 ## Requirements
 
-- **macOS** — uses BSD `stat -f`, `tail -r`, and `md5` (degrades gracefully elsewhere, but tuned for macOS).
+- **macOS** — uses BSD `stat -f`, `tail -r`, and `md5`. It still renders elsewhere, but
+  degrades: `md5` falls back to `md5sum`, while `stat -f` and `tail -r` have no fallback —
+  so on Linux the cache is bypassed (recomputed each render) and the "latest request" half
+  of the task segment may stay blank.
 - **`jq`** — required. `brew install jq`.
 - **`git`** — for the branch/worktree segment.
 

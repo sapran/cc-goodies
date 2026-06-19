@@ -13,7 +13,10 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 > **Shell safety.** `git-guard` and `shell-guard`, together with your `settings.json`
 > deny list and plan mode, form a layered defense against dangerous shell commands. The
 > **[shell-safety manual](docs/shell-safety.md)** is the map: threat model, what each
-> layer catches and misses, and how to set it all up.
+> layer catches and misses, and how to set it all up. It also ships an **advisory
+> companion** ([`rules/shell-safety.md`](rules/shell-safety.md)) you symlink into
+> `~/.claude/rules/` — the judgment calls (obfuscation, piping remote → shell, prompt
+> injection) a hook can't enforce.
 
 ## Install
 
