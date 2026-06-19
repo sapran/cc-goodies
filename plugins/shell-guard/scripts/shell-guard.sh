@@ -83,7 +83,7 @@ NET_RE='(curl|wget|fetch)([^|]*\|)+[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space
 NETSUB_RE='(sh|bash|zsh|dash|ksh|source|\.)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*<\((curl|wget|fetch)'
 # Command substitution fed to an interpreter — `bash -c "$(curl …)"`.
 NETCMDSUB_RE='(sh|bash|zsh|dash|ksh)[[:space:]][^=]*\$\([[:space:]]*(curl|wget|fetch)'
-DEV_RE='>[[:space:]]*/dev/(disk|rdisk|sd|hd|nvme|vd)'
+DEV_RE='>[[:space:]]*["'"'"']?/dev/(disk|rdisk|sd|hd|nvme|vd)'
 FORK_RE='([A-Za-z_:][A-Za-z0-9_:]*)\(\)[[:space:]]*\{(.*)\}'
 # The `: >` truncate-to-empty idiom: a segment that starts with `:` then a
 # single `>` redirect. (A bare `> file` is an ordinary redirect — not matched.)
@@ -102,7 +102,7 @@ deny() {
 # directory, or a glob-all while the session sits in $HOME?
 is_cata_target() {
   t="$1"
-  t="${t#\"}"; t="${t%\"}"; t="${t#\'}"; t="${t%\'}"   # strip surrounding quotes
+  t="${t//\"/}"; t="${t//\'/}"; t="${t#\\}"   # drop all quotes + a leading backslash (/"" \/ ''/ "$HOME")
   # The `~` / `$HOME` patterns are literal text as typed in the command, matched
   # verbatim — not meant to expand here. (Silences SC2088/SC2016.)
   # shellcheck disable=SC2088,SC2016
@@ -145,6 +145,7 @@ eval_tokens() {
   done
   [ $# -gt 0 ] || return 0
   c="$1"; shift
+  c="${c##*/}"; c="${c#\\}"; c="${c//\"/}"; c="${c//\'/}"   # basename + de-quote (/bin/rm, \rm -> rm)
 
   case "$c" in
     rm)
@@ -166,7 +167,8 @@ eval_tokens() {
       ;;
     dd)
       for a in "$@"; do
-        case "$a" in of=/dev/*) deny "dd onto a device node"; return 2 ;; esac
+        na="${a//\"/}"; na="${na//\'/}"
+        case "$na" in of=/dev/*) deny "dd onto a device node"; return 2 ;; esac
       done
       ;;
     mkfs|mkfs.*|wipefs|newfs|newfs_*)
