@@ -116,40 +116,10 @@ is_cata_target() {
   return 1
 }
 
-# Evaluate ONE command segment. Returns 2 (and prints) to block, 0 to allow.
-evaluate_segment() {
-  seg="$1"
-
-  # -- raw-text checks (these don't survive tokenising) ----------------------
-  if [[ "$seg" =~ $NET_RE ]] || [[ "$seg" =~ $NETSUB_RE ]]; then
-    deny "network download piped into a shell"; return 2
-  fi
-  if [[ "$seg" =~ $DEV_RE ]]; then
-    deny "redirect onto a raw disk device"; return 2
-  fi
-  if [[ "$seg" =~ $TRUNC_RE ]]; then
-    deny "truncate a file to empty (\`: >\`)"; return 2
-  fi
-  # Fork bomb: a function that pipes & backgrounds a call to itself.
-  if [[ "$seg" =~ $FORK_RE ]]; then
-    fn="${BASH_REMATCH[1]}"; body="${BASH_REMATCH[2]}"
-    if [[ "$body" == *"|"* && "$body" == *"&"* && "$body" == *"$fn"* ]]; then
-      deny "fork bomb"; return 2
-    fi
-  fi
-  # User-supplied extra patterns (ERE), ;- or newline-separated.
-  if [ -n "${EXTRA:-}" ]; then
-    while IFS= read -r pat; do
-      [ -n "$pat" ] || continue
-      [[ "$seg" =~ $pat ]] && { deny "matches a configured block pattern"; return 2; }
-    done <<EOF2
-$(printf '%s\n' "$EXTRA" | awk '{gsub(/;/,"\n")}1')
-EOF2
-  fi
-
-  # -- tokenised checks ------------------------------------------------------
+# Evaluate the tokenised command word of ONE pipeline stage. Returns 2 to block.
+eval_tokens() {
   # shellcheck disable=SC2086
-  set -- $seg
+  set -- $1
   [ $# -gt 0 ] || return 0
 
   # Walk past benign prefixes / shell keywords to the real command word.
@@ -172,9 +142,8 @@ EOF2
 
   case "$c" in
     rm)
-      # A recursive removal of a catastrophic target is blocked whether or not
-      # -f is present (`rm -r /` is just as fatal); --no-preserve-root is always
-      # a red flag, so we don't track the force flag separately.
+      # Recursive removal of a catastrophic target is blocked with or without -f
+      # (`rm -r /` is just as fatal); --no-preserve-root is always a red flag.
       has_r=0; nopreserve=0; cata=0
       for a in "$@"; do
         case "$a" in
@@ -239,6 +208,52 @@ EOF2
       done
       ;;
   esac
+  return 0
+}
+
+# Evaluate ONE command segment. Returns 2 (and prints) to block, 0 to allow.
+evaluate_segment() {
+  seg="$1"
+
+  # -- raw-text checks (these don't survive tokenising) ----------------------
+  if [[ "$seg" =~ $NET_RE ]] || [[ "$seg" =~ $NETSUB_RE ]]; then
+    deny "network download piped into a shell"; return 2
+  fi
+  if [[ "$seg" =~ $DEV_RE ]]; then
+    deny "redirect onto a raw disk device"; return 2
+  fi
+  if [[ "$seg" =~ $TRUNC_RE ]]; then
+    deny "truncate a file to empty (\`: >\`)"; return 2
+  fi
+  # Fork bomb: a function that pipes & backgrounds a call to itself.
+  if [[ "$seg" =~ $FORK_RE ]]; then
+    fn="${BASH_REMATCH[1]}"; body="${BASH_REMATCH[2]}"
+    if [[ "$body" == *"|"* && "$body" == *"&"* && "$body" == *"$fn"* ]]; then
+      deny "fork bomb"; return 2
+    fi
+  fi
+  # User-supplied extra patterns (ERE), ;- or newline-separated.
+  if [ -n "${EXTRA:-}" ]; then
+    while IFS= read -r pat; do
+      [ -n "$pat" ] || continue
+      [[ "$seg" =~ $pat ]] && { deny "matches a configured block pattern"; return 2; }
+    done <<EOF2
+$(printf '%s\n' "$EXTRA" | awk '{gsub(/;/,"\n")}1')
+EOF2
+  fi
+
+  # -- tokenised checks ------------------------------------------------------
+  # The pipe/redirect-aware regexes above already ran on the whole segment.
+  # Now split it into pipeline stages and subshell/brace bodies (on | & ( ) { })
+  # and run the per-command checks on each, so a dangerous command behind a pipe,
+  # a background &, a subshell or a brace group is still inspected. set -f (top of
+  # file) keeps globs literal across the split.
+  while IFS= read -r stage; do
+    [ -n "$stage" ] || continue
+    eval_tokens "$stage" || return 2
+  done <<EOF_STAGE
+$(printf '%s\n' "$seg" | awk '{gsub(/[|&(){}]/,"\n")}1')
+EOF_STAGE
   return 0
 }
 
