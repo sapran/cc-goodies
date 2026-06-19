@@ -28,7 +28,7 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 /rtk-hook-install
 ```
 
-Install any subset — they don't depend on each other. `/statusline-install` and `/rtk-hook-install` are one-time wiring steps: the first is needed only if you installed the statusline; the second is an optional cleanup that removes a hand-wired `rtk hook claude` entry from `settings.json` (RTK itself is a separate prerequisite).
+Install any subset — they don't depend on each other. `/statusline-install` and `/rtk-hook-install` are one-time wiring steps: the first is needed only if you installed the statusline; the second is an optional cleanup most people skip — it only removes a `rtk hook claude` entry you hand-wired into `settings.json` yourself (RTK itself is a separate prerequisite: `brew install rtk`).
 
 ## Uninstall
 

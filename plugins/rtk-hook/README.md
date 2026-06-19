@@ -24,17 +24,20 @@ The plugin declares a single `PreToolUse`/`Bash` hook that runs a tiny wrapper,
 ```text
 /plugin marketplace add sapran/cc-goodies
 /plugin install rtk-hook@cc-goodies
-/rtk-hook-install
+/rtk-hook-install                       # optional cleanup — most people skip it (see below)
 ```
 
 The plugin hook activates on install (restart or `/hooks` to load it). RTK itself is a
-separate prerequisite — install the `rtk` binary on your own (the hook no-ops until you
-do).
+separate prerequisite — install the `rtk` binary first (`brew install rtk`; homepage
+<https://www.rtk-ai.app/>). The hook no-ops until `rtk` is on your `PATH`, so the order
+doesn't matter.
 
-`/rtk-hook-install` is an optional one-time cleanup: if you previously wired
-`rtk hook claude` directly into `~/.claude/settings.json`, it removes that now-duplicate
-entry (after showing it and confirming) so RTK isn't invoked twice per Bash call. RTK is
-idempotent, so the duplicate is harmless if you skip this — just untidy.
+`/rtk-hook-install` is an **optional** one-time cleanup — **skip it unless you previously
+hand-wired `rtk hook claude` into `~/.claude/settings.json` yourself** (most people never
+did; the plugin's own hook is all you need). If you *did* wire it by hand, this command
+removes that now-duplicate entry (after showing it and confirming) so RTK isn't invoked
+twice per Bash call. RTK is idempotent, so the duplicate is harmless if you skip this —
+just untidy.
 
 ## Uninstall
 
@@ -59,8 +62,9 @@ plugin and its hook.
 
 ## Requirements
 
-- `bash`, and the `rtk` (Rust Token Killer) binary on `PATH` for any effect. `jq` is used
-  only by the install/uninstall commands to edit `settings.json`.
+- `bash`, and the `rtk` (Rust Token Killer) binary on `PATH` for any effect
+  (`brew install rtk` — homepage <https://www.rtk-ai.app/>). `jq` is used only by the
+  install/uninstall commands to edit `settings.json`.
 
 ## License
 
