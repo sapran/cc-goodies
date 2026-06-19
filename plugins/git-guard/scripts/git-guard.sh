@@ -111,12 +111,16 @@ evaluate_segment() {
   set -- $seg
   [ $# -gt 0 ] || return 0
 
-  # Walk past benign prefixes until we hit `git`; bail if some other command.
+  # Walk past benign prefixes and command wrappers until we hit `git`; bail if some
+  # other command. Wrappers (timeout/setsid/xargs/…) are skipped so
+  # `timeout 60 git push origin main` is still judged.
   while [ $# -gt 0 ]; do
-    case "$1" in
+    case "${1##*/}" in
       git) shift; break ;;
-      *=*|sudo|command|exec|builtin|nice|nohup|time|env|then|do|else) shift ;;
-      *) return 0 ;;   # not a git invocation (e.g. `echo git push ...`)
+      timeout) shift; while [ $# -gt 0 ]; do case "$1" in -*) shift ;; *) shift; break ;; esac; done ;;
+      xargs)   shift; while [ $# -gt 0 ]; do case "$1" in -*) shift ;; *) break ;; esac; done ;;
+      sudo|command|exec|builtin|nice|nohup|time|env|setsid|stdbuf|ionice|chrt|then|do|else) shift ;;
+      *) case "$1" in *=*) shift ;; *) return 0 ;; esac ;;   # VAR=val prefix, else not git
     esac
   done
   [ $# -gt 0 ] || return 0   # bare `git`
@@ -205,6 +209,7 @@ evaluate_segment() {
     else
       target="__CURRENT__"           # `git push` or `git push <remote>`
     fi
+    target="${target//\"/}"; target="${target//\'/}"   # de-quote refspec (`"main"` -> main)
     case "$target" in
       __ALL__|__CURRENT__) ;;
       *:*) target="${target##*:}" ;; # src:dst (incl. :dst delete) -> dst
@@ -220,6 +225,7 @@ evaluate_segment() {
       *)                br="$target"; tclass="$(class_of "$br")" ;;
     esac
   elif [ -n "$xtarget" ]; then
+    xtarget="${xtarget//\"/}"; xtarget="${xtarget//\'/}"   # de-quote (`branch -f "main"`)
     br="$xtarget"; tclass="$(class_of "$br")"   # verb names the branch explicitly
   else
     br="$(current_branch "${cdir:-$cwd}")"
