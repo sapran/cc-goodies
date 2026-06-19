@@ -174,10 +174,41 @@ eval_tokens() {
     mkfs|mkfs.*|wipefs|newfs|newfs_*)
       deny "filesystem creation/wipe ($c)"; return 2
       ;;
+    find)
+      # `find <protected path> … -delete` recursively unlinks like `rm -rf`.
+      fdel=0; fcata=0
+      for a in "$@"; do
+        case "$a" in
+          -delete) fdel=1 ;;
+          -*) : ;;
+          *) is_cata_target "$a" && fcata=1 ;;
+        esac
+      done
+      [ "$fdel" = 1 ] && [ "$fcata" = 1 ] && { deny "find -delete of a protected path"; return 2; }
+      ;;
+    shred)
+      for a in "$@"; do
+        na="${a//\"/}"; na="${na//\'/}"
+        case "$na" in
+          /dev/disk*|/dev/rdisk*|/dev/sd*|/dev/hd*|/dev/nvme*|/dev/vd*) deny "shred a raw disk device"; return 2 ;;
+        esac
+        is_cata_target "$a" && { deny "shred of a protected path"; return 2; }
+      done
+      ;;
+    cp|tee)
+      # Overwriting a raw disk device via cp/tee (not just dd/redirect).
+      for a in "$@"; do
+        na="${a//\"/}"; na="${na//\'/}"
+        case "$na" in
+          /dev/disk*|/dev/rdisk*|/dev/sd*|/dev/hd*|/dev/nvme*|/dev/vd*) deny "$c onto a raw disk device"; return 2 ;;
+        esac
+      done
+      ;;
     diskutil)
       case "${1:-}" in
         eraseDisk|eraseVolume|reformat|zeroDisk|secureErase|partitionDisk|eraseall)
           deny "destructive diskutil ($1)"; return 2 ;;
+        apfs) case "${2:-}" in delete*|erase*) deny "destructive diskutil (apfs $2)"; return 2 ;; esac ;;
       esac
       ;;
     chmod|chown)
