@@ -5,7 +5,7 @@
     "url": "https://github.com/sapran"
   },
   "metadata": {
-    "description": "Developer-experience extras for Claude Code: spoken notifications, an enriched statusline, a protected-branch guard, a dangerous-command guard, an RTK token-optimizer hook, and an end-of-session finaliser.",
+    "description": "Developer-experience extras for Claude Code: spoken notifications, an enriched statusline, a protected-branch guard, a dangerous-command guard, an RTK token-optimizer hook, an end-of-session finaliser, and a per-project tool scoper.",
     "version": "0.1.0",
     "repository": "https://github.com/sapran/cc-goodies"
   },
@@ -39,6 +39,11 @@
       "name": "session-finalise",
       "source": "./plugins/session-finalise",
       "description": "End-of-session housekeeping: an auto-activating checklist (durable memory, handoff, tracker updates, commit/stash, cleanup) plus a /session-finalise command, confirming every irreversible step."
+    },
+    {
+      "name": "project-scope",
+      "source": "./plugins/project-scope",
+      "description": "Scope a project's plugins, MCP servers and skills to a stated theme — consented project-scope install/uninstall plus a leaner .claude/settings.json (skill overrides, denied MCPs, context budget). Auto-activating skill plus a /project-scope command."
     }
   ]
 }

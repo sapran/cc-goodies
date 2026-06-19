@@ -44,6 +44,18 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   triggered by wrap-up phrases) and a bare **`/session-finalise`** command. Writes nothing
   outside its plugin directory, so `/plugin uninstall` is the complete revert. Migrated from
   a local user-level skill + `/finalize` command.
+- **`project-scope` plugin** — scopes a project's plugins, MCP servers and skills to a stated
+  theme. Inventories resources at three friction tiers (currently active, installed-but-disabled,
+  available in registered marketplaces), judges each against the theme, prints the full proposal,
+  then asks **per-bucket consent** before applying: uninstalls off-theme plugins at **project
+  scope**, disables user-level skills and MCP servers (incl. Claude Desktop / claude.ai) via
+  `.claude/settings.json` (`skillOverrides`, `deniedMcpServers`), installs theme-relevant plugins
+  (already-downloaded, or from a marketplace with explicit consent), and sets
+  `skillListingBudgetFraction`. Project scope only — never edits global `~/.claude/settings.json`
+  and never hand-edits `enabledPlugins` (the CLI owns it). Ships as an **auto-activating skill**
+  plus a **`/project-scope`** command; writes nothing outside its plugin directory, so
+  `/plugin uninstall` is the complete revert. Migrated from the local `/claude-scope-project`
+  command.
 
 ### Changed
 
