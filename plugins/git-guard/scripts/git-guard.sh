@@ -112,14 +112,60 @@ evaluate_segment() {
   [ $# -gt 0 ] || return 0
 
   # Walk past benign prefixes and command wrappers until we hit `git`; bail if some
-  # other command. Wrappers (timeout/setsid/xargs/…) are skipped so
-  # `timeout 60 git push origin main` is still judged.
+  # other command. Wrappers are skipped so `timeout 60 git push origin main` and
+  # `nice -n 5 git push …` are still judged. Each wrapper consumes its own options
+  # AND any value those options take, so a wrapper option's value (`timeout -s KILL`,
+  # `sudo -u alice`) is never mistaken for the command word. Resource wrappers also
+  # swallow numeric positionals (duration/priority/CPU mask).
   while [ $# -gt 0 ]; do
     case "${1##*/}" in
       git) shift; break ;;
-      timeout) shift; while [ $# -gt 0 ]; do case "$1" in -*) shift ;; *) shift; break ;; esac; done ;;
-      xargs)   shift; while [ $# -gt 0 ]; do case "$1" in -*) shift ;; *) break ;; esac; done ;;
-      sudo|command|exec|builtin|nice|nohup|time|env|setsid|stdbuf|ionice|chrt|then|do|else) shift ;;
+      timeout|nice|chrt|taskset|ionice)
+        shift
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            -s|--signal|-k|--kill-after) shift; [ $# -gt 0 ] && shift ;;   # timeout SIG/DUR value
+            -*) shift ;;
+            [0-9]*) shift ;;                                               # duration/priority/mask
+            *) break ;;
+          esac
+        done ;;
+      sudo|doas)
+        shift
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            -u|--user|-g|--group|-p|--prompt|-r|--role|-t|--type|-T|-U|-h|--host|-C|--close-from|-R|-D|--chdir)
+              shift; [ $# -gt 0 ] && shift ;;
+            -*) shift ;;
+            *) break ;;
+          esac
+        done ;;
+      env)
+        shift
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            -u|--unset|-C|--chdir|-S|--split-string) shift; [ $# -gt 0 ] && shift ;;
+            -*) shift ;;
+            *=*) shift ;;                                                  # env VAR=val assignment
+            *) break ;;
+          esac
+        done ;;
+      xargs)
+        shift
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            -I|--replace|-d|--delimiter|-E|--eof|-n|--max-args|-P|--max-procs|-L|--max-lines|-l|-s)
+              shift; [ $# -gt 0 ] && shift ;;
+            -*) shift ;;
+            *) break ;;
+          esac
+        done ;;
+      command|exec|builtin|nohup|time|setsid|stdbuf|su|runuser|pkexec|then|do|else)
+        # Option-only wrappers: skip leading boolean options to reach the command.
+        # Rare value-taking opts here (exec -a NAME, time -o FILE, su -c CMD) are a
+        # documented residual.
+        shift
+        while [ $# -gt 0 ]; do case "$1" in -*) shift ;; *) break ;; esac; done ;;
       *) case "$1" in *=*) shift ;; *) return 0 ;; esac ;;   # VAR=val prefix, else not git
     esac
   done
@@ -165,15 +211,43 @@ evaluate_segment() {
       for a in "$@"; do case "$a" in --hard|--merge|--keep) action="localwrite" ;; esac; done
       [ -n "$action" ] || return 0 ;;
     branch)
-      # `branch -f|-D|-M <name>` force-resets / deletes / renames the named branch.
-      bforce=0
-      for a in "$@"; do case "$a" in -f|--force|-D|-M) bforce=1 ;; esac; done
-      [ "$bforce" = 1 ] || return 0
-      for a in "$@"; do case "$a" in -*) ;; *) xtarget="$a"; break ;; esac; done
-      [ -n "$xtarget" ] || return 0
+      # `-f|-D|-M|-C` force-reset / delete / force-rename / force-copy; `-m|-c`
+      # rename / copy. All can clobber, move or replace a protected branch.
+      bforce=0; brename=0
+      for a in "$@"; do
+        case "$a" in
+          -f|--force|-D|-M|-C) bforce=1 ;;
+          -m|--move|-c|--copy)  brename=1 ;;
+        esac
+      done
+      [ "$bforce" = 1 ] || [ "$brename" = 1 ] || return 0
+      # A rename/copy with one name targets the CURRENT branch; with two it moves
+      # <old> -> <new>. Touching a protected branch on EITHER side counts, so judge
+      # every positional, and for the single-name rename judge the current branch.
+      np=0; hit=""
+      for a in "$@"; do
+        case "$a" in -*) continue ;; esac
+        np=$((np+1)); nm="${a//\"/}"; nm="${nm//\'/}"
+        [ "$(class_of "$nm")" = MAIN ] && { hit="$nm"; break; }
+      done
+      if [ -z "$hit" ] && [ "$brename" = 1 ] && [ "$np" -lt 2 ]; then
+        cb="$(current_branch "${cdir:-$cwd}")"
+        [ -n "$cb" ] && [ "$(class_of "$cb")" = MAIN ] && hit="$cb"
+      fi
+      [ -n "$hit" ] || return 0
+      xtarget="$hit"
       action="localwrite" ;;
     update-ref)
-      for a in "$@"; do case "$a" in -*) ;; *) xtarget="$a"; break ;; esac; done
+      # Skip the value of `-m <reason>` so the reason text isn't taken as the ref.
+      skipval=0
+      for a in "$@"; do
+        if [ "$skipval" = 1 ]; then skipval=0; continue; fi
+        case "$a" in
+          -m|--message) skipval=1 ;;
+          -*) ;;
+          *) xtarget="$a"; break ;;
+        esac
+      done
       xtarget="${xtarget#refs/heads/}"
       [ -n "$xtarget" ] || return 0
       action="localwrite" ;;
@@ -194,6 +268,9 @@ evaluate_segment() {
     while [ $# -gt 0 ]; do
       case "$1" in
         --all|--mirror) pushall=1 ;;
+        -o|--push-option|--receive-pack|--exec|--repo)
+          [ $# -gt 1 ] && shift ;;   # these flags take a value token — skip it so
+                                     # it isn't mistaken for the remote/refspec
         -*) ;;                       # other flags don't name a branch
         *)
           if [ -z "$first" ]; then first="$1"

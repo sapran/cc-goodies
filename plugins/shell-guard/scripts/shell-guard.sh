@@ -175,13 +175,27 @@ eval_tokens() {
         sw=1; shift; continue ;;
       command|exec|builtin|nohup|time|env|setsid|stdbuf|then|do|else)
         sw=1; shift; continue ;;
-      timeout|nice|chrt|taskset|ionice)   # resource wrappers: skip their opts AND numeric
-        sw=1; shift                        # positionals (duration/priority/mask) to the real cmd
-        while [ $# -gt 0 ]; do case "$1" in -*) shift ;; [0-9]*) shift ;; *) break ;; esac; done
+      timeout|nice|chrt|taskset|ionice)   # resource wrappers: skip their opts, opt
+        sw=1; shift                        # values, AND numeric positionals to the real cmd
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            -s|--signal|-k|--kill-after) shift; [ $# -gt 0 ] && shift ;;   # timeout SIG/DUR value
+            -*) shift ;;
+            [0-9]*) shift ;;               # duration/priority/mask
+            *) break ;;
+          esac
+        done
         continue ;;
-      xargs)     # xargs [opts] cmd — skip opts to reach the command it runs
+      xargs)     # xargs [opts] cmd — skip opts AND their values to reach the command
         sw=1; shift
-        while [ $# -gt 0 ]; do case "$1" in -*) shift ;; *) break ;; esac; done
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            -I|--replace|-d|--delimiter|-E|--eof|-n|--max-args|-P|--max-procs|-L|--max-lines|-l|-s)
+              shift; [ $# -gt 0 ] && shift ;;
+            -*) shift ;;
+            *) break ;;
+          esac
+        done
         continue ;;
     esac
     case "$1" in
@@ -227,15 +241,19 @@ eval_tokens() {
       # `find <protected path> … -delete`, or `-exec`/`-ok` running a *mutating*
       # command, recursively destroys like `rm -rf`. A read-only `-exec grep/cat/…`
       # over a system dir is ordinary recon, so the executed command is inspected.
-      fdestroy=0; fcata=0; inexec=0
+      fdestroy=0; fcata=0; inexec=0; xskip=0
       for a in "$@"; do
         if [ "$inexec" = 1 ]; then   # walk past wrappers to the command -exec actually runs
+          if [ "$xskip" = 1 ]; then xskip=0; else
           case "${a##*/}" in
-            env|nohup|setsid|stdbuf|ionice|nice|chrt|taskset|timeout|xargs|command|exec|sudo|doas|su|runuser) : ;;
+            env|nohup|setsid|stdbuf|ionice|nice|chrt|taskset|timeout|xargs|command|exec|sudo|doas|su|runuser|pkexec|gosu) : ;;
+            -s|--signal|-k|--kill-after|-u|--user|-g|--group|-I|--replace|-d|--delimiter|-E|--eof|-n|--max-args|-P|--max-procs|-C|-S|--split-string|-a|-o|-L|-l)
+              xskip=1 ;;              # wrapper option that takes a value — skip its value too
             *=*|-*|[0-9]*) : ;;      # VAR=val, a wrapper option, or a numeric positional
             rm|rmdir|mv|chmod|chown|shred|dd|truncate|tee|unlink) fdestroy=1; inexec=0 ;;
             *) inexec=0 ;;           # a read-only command (grep/cat/…): stop, not destructive
           esac
+          fi
         fi
         case "$a" in
           -exec|-execdir|-ok|-okdir) inexec=1 ;;
