@@ -44,13 +44,19 @@ Each is matched after normalising flags/spacing, not by naïve substring match:
 - **`dd` onto a device** — `dd … of=/dev/…`.
 - **Filesystem create/wipe** — `mkfs`, `mkfs.*`, `wipefs`, `newfs`, `newfs_*`.
 - **Destructive `diskutil`** — `eraseDisk`, `eraseVolume`, `reformat`, `zeroDisk`,
-  `secureErase`, `partitionDisk`, `eraseall`.
-- **Redirect onto a raw disk device** — `> /dev/disk*`, `/dev/rdisk*`, `/dev/sd*`,
-  `/dev/hd*`, `/dev/nvme*`, `/dev/vd*` (but **not** `/dev/null`, `/dev/zero`, a tty…).
+  `secureErase`, `partitionDisk`, `eraseall`, `apfs delete*`/`apfs erase*`.
+- **Overwrite a raw disk device** — a `>` redirect, or `dd of=`, `cp`, or `tee`
+  whose target is `/dev/disk*`, `/dev/rdisk*`, `/dev/sd*`, `/dev/hd*`, `/dev/nvme*`,
+  `/dev/vd*` (but **not** `/dev/null`, `/dev/zero`, a tty…).
+- **Recursive unlink without `rm`** — `find <protected path> … -delete`; `shred`
+  of a raw disk device or a protected path.
 - **Fork bomb** — a function that pipes and backgrounds a call to itself
   (`:(){ :|:& };:` and renamed variants).
-- **Network download piped into a shell** — `curl`/`wget`/`fetch` piped into
-  `sh`/`bash`/`zsh`/`dash` (including via `sudo`, and `bash <(curl …)`).
+- **Network download fed to an interpreter** — `curl`/`wget`/`fetch` reaching
+  `sh`/`bash`/`zsh`/`dash`/`ksh`/`python`/`perl`/`ruby`/`node`/`php` through one or
+  more pipe stages (incl. via `sudo`/`env`/a `VAR=…` prefix), process substitution
+  (`bash <(curl …)`, `source <(curl …)`), or command substitution
+  (`bash -c "$(curl …)"`).
 - **Truncate a file to empty** — the `: > file` idiom and `truncate -s 0` /
   `--size=0` (but **not** a plain `> file` redirect, nor `: >> file` append).
 - **`chmod 777`** — world-writable permissions (`chmod 777` / `0777`, recursive or not).
@@ -60,8 +66,11 @@ Each is matched after normalising flags/spacing, not by naïve substring match:
 - **System halt/reboot** — `reboot`, `shutdown`, `halt`, `poweroff`, `init 0`/`init 6`.
 - Anything in your `SHELL_GUARD_EXTRA_PATTERNS` (see **Configure**).
 
-Compound commands are split on `&&`, `||`, `;` and newlines and judged piece by piece,
-so `git pull && rm -rf /` is caught.
+Compound commands are split on `&&`, `||`, `;`, newlines, and — for the per-command
+checks — single pipes, background `&`, subshells `( )` and brace groups `{ }`, so
+`git pull && rm -rf /`, `true | rm -rf /` and `(rm -rf /)` are all caught. Wrappers
+(`timeout`, `xargs`, `bash -c "…"`), backtick substitution and variable indirection
+can still hide a command — best-effort, not a sandbox.
 
 ## What it deliberately allows
 

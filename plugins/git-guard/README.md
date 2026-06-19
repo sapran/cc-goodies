@@ -90,14 +90,20 @@ line in `~/.claude/git-guard.conf`): the guard no-ops but stays installed.
 Target branches are resolved properly, not by substring matching:
 
 - `git push origin main`, `git push -u origin main`, `git push origin HEAD:main`,
-  `git push origin HEAD:refs/heads/main` → all resolve to `main`.
+  `git push origin HEAD:refs/heads/main`, the force shorthand `git push origin +main`,
+  and `git push origin HEAD` (current branch) → all resolve to `main`.
 - `git push --all` / `--mirror` → treated as touching protected branches.
 - `git push origin :main` (delete remote `main`) → blocked.
-- `git commit` / `git merge` / `git pull` / `git rebase` → judged against the
-  **current** branch (each mutates it like a commit).
+- `git commit` / `merge` / `pull` / `rebase` / `cherry-pick` / `revert` / `am`, and
+  a history-moving `git reset --hard|--merge|--keep` → judged against the **current**
+  branch (each mutates it like a commit).
+- `git branch -f|-D|-M <b>`, `git update-ref refs/heads/<b>`, `git checkout/switch -B <b>`
+  → judged against the **named** branch `<b>` (direct ref rewrites).
+- `git -c alias.x=push x …` → the inline alias is resolved to its real verb.
 - `git -C <path> …` → the branch is resolved in `<path>`, not the cwd.
-- Compound commands are split on `&&`, `||`, `;` and judged piece by piece, so
-  `git add . && git push origin main` is caught.
+- Compound commands are split on `&&`, `||`, `;`, newlines, single pipes, background
+  `&`, subshells `( )` and brace groups `{ }`, so `git add . && git push origin main`,
+  `true | git push origin main` and `(git push origin main)` are all caught.
 - `git push origin feature/main-menu` is **not** blocked (it isn't `main`), and
   `echo "git push origin main"` is **not** a git command, so it's ignored.
 
@@ -110,9 +116,11 @@ Target branches are resolved properly, not by substring matching:
   session sits on an unprotected branch, miss a write to another repo's `main`. Use
   the `git -C /path …` form for another repo — that **is** resolved correctly. Working
   normally inside the repo is fully covered.
-- **Best-effort shell parsing.** Exotic quoting or aliases that hide a `git` verb can
-  slip through — this is a convenience guard, not a server-side branch protection.
-  Pair it with real protections (GitHub branch rules) for anything that matters.
+- **Best-effort shell parsing.** Inline `-c alias.*=` definitions are resolved, but a
+  `git` verb hidden behind a wrapper (`timeout`, `xargs`, `bash -c "…"`), backtick
+  substitution, or a **persistent** alias from `~/.gitconfig` can still slip through —
+  this is a convenience guard, not a server-side branch protection. Pair it with real
+  protections (GitHub branch rules) for anything that matters.
 - **Requires `jq`** to parse the hook input. If `jq` is missing the guard prints a
   one-line warning and **allows** the command (it fails open rather than blocking
   every Bash call). `brew install jq` to enable it.

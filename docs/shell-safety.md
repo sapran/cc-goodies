@@ -115,9 +115,11 @@ A `PreToolUse`/`Bash` hook that **parses the git command** — walking past pref
 (`sudo`, `env`, var-assignments), reading global options (`-C`, `-c`, …), extracting the
 verb, and resolving the branch — then blocks (exit 2) when the active policy forbids it.
 
-- **Guarded verbs:** `commit`, `merge`, `pull`, `rebase` (all judged against the
-  **current** branch — each mutates it like a commit), and `push` (judged against the
-  resolved target refspec).
+- **Guarded verbs:** `commit`, `merge`, `pull`, `rebase`, `cherry-pick`, `revert`,
+  `am`, and a history-moving `reset --hard|--merge|--keep` (judged against the
+  **current** branch); `branch -f`, `update-ref`, `checkout/switch -B` (judged against
+  the **named** branch); and `push` (judged against the resolved target refspec,
+  including the `+force` shorthand and `HEAD`). Inline `-c alias.*=` is resolved.
 - **Policies** (`GIT_GUARD_POLICY`, default `2`):
 
   | Policy | Push → main | Commit/pull/rebase → main | Push → develop | …→ develop |
@@ -139,8 +141,9 @@ Full detail and the override paths: [git-guard README](../plugins/git-guard/READ
 
 A `PreToolUse`/`Bash` hook that hard-blocks (exit 2) a **curated set** of dangerous
 commands. Unlike Layer 1 it normalizes flags/spacing and resolves the target, catching the
-obfuscated variants the string list misses. It splits compound commands on `&&`, `||`, `;`
-and newlines and judges each piece, so `git pull && rm -rf /` is caught.
+obfuscated variants the string list misses. It splits compound commands on `&&`, `||`, `;`,
+newlines, single pipes, background `&`, subshells `( )` and brace groups `{ }`, and judges
+each piece, so `git pull && rm -rf /`, `true | rm -rf /` and `(rm -rf /)` are all caught.
 
 **Blocks:**
 
@@ -153,8 +156,11 @@ and newlines and judges each piece, so `git pull && rm -rf /` is caught.
 - redirect onto a raw disk device (`> /dev/disk*`, `/dev/rdisk*`, `/dev/sd*`, … — **not**
   `/dev/null`/`zero`/tty);
 - fork bombs (a function that pipes and backgrounds a call to itself);
-- a network download piped into a shell (`curl`/`wget`/`fetch` → `sh`/`bash`/`zsh`,
-  including via `sudo` and `bash <(curl …)`);
+- a network download fed to an interpreter (`curl`/`wget`/`fetch` → `sh`/`bash`/`zsh`/
+  `dash`/`ksh`/`python`/`perl`/`ruby`/`node`/`php`) through one or more pipe stages, an
+  `env`/`VAR=…`/`sudo` prefix, process substitution (`bash <(curl …)`, `source <(curl …)`)
+  or command substitution (`bash -c "$(curl …)"`); plus `find … -delete`, `shred`,
+  `cp`/`tee` and `diskutil apfs delete*` against a raw disk or protected path;
 - truncate a file to empty — the `: > file` idiom and `truncate -s 0`/`--size=0` (but not
   a plain `> file` redirect or `: >>` append);
 - `chmod 777`/`0777` (world-writable); `eval` (arbitrary code execution);
@@ -216,8 +222,10 @@ ever gate Claude's Bash tool, never your own shell.
 - **shell-guard is curated, not exhaustive.** It targets a high-confidence catastrophic
   set and stays out of the way of ordinary work; it will not catch every destructive
   command. Add your own via `SHELL_GUARD_EXTRA_PATTERNS`.
-- **Best-effort shell parsing.** Exotic quoting, `eval`, or variable indirection can hide
-  an operation from the hook layers.
+- **Best-effort shell parsing.** Pipes, `&`, subshells and brace groups are now split,
+  but a command hidden behind a wrapper (`timeout`, `xargs`, `bash -c "…"`), backtick
+  substitution, `eval`, a persistent `~/.gitconfig` alias, or variable indirection can
+  still hide an operation from the hook layers.
 - **`rm -rf *` is only caught in `$HOME`.** Elsewhere the guard can't know what `*`
   expands to, so it allows it (blocking every `rm -rf *` would break normal build work).
 - **Not a sandbox, not server-side.** Pair with backups and GitHub/GitLab branch
