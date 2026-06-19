@@ -122,11 +122,18 @@ evaluate_segment() {
   [ $# -gt 0 ] || return 0   # bare `git`
 
   # Parse git's global options to find the subcommand and an optional `-C dir`.
-  cdir=""; verb=""
+  # `aliases` collects inline `-c alias.NAME=VERB` definitions so they can be
+  # resolved to the underlying verb below.
+  cdir=""; verb=""; aliases=""
   while [ $# -gt 0 ]; do
     case "$1" in
       -C) cdir="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-      -c) shift; [ $# -gt 0 ] && shift ;;
+      -c) cval="${2:-}"; shift; [ $# -gt 0 ] && shift
+          case "$cval" in
+            alias.*=*) an="${cval#alias.}"; an="${an%%=*}"
+                       av="${cval#*=}"; av="${av%% *}"   # first word of the expansion
+                       aliases="$aliases${aliases:+ }$an=$av" ;;
+          esac ;;
       --git-dir=*|--work-tree=*|--namespace=*) shift ;;
       --git-dir|--work-tree|--namespace) shift; [ $# -gt 0 ] && shift ;;
       -*) shift ;;
@@ -134,6 +141,13 @@ evaluate_segment() {
     esac
   done
   [ -n "$verb" ] || return 0
+
+  # Resolve an inline-defined alias (`git -c alias.up=push up …`) to its real verb,
+  # so the alias is judged as the action it performs. Persistent-config aliases in
+  # ~/.gitconfig can't be seen from here and remain a documented gap.
+  for amap in $aliases; do
+    case "$amap" in "$verb="*) verb="${amap#*=}"; break ;; esac
+  done
 
   case "$verb" in
     commit|merge|pull|rebase) action="localwrite" ;;
@@ -166,14 +180,15 @@ evaluate_segment() {
       __ALL__|__CURRENT__) ;;
       *:*) target="${target##*:}" ;; # src:dst (incl. :dst delete) -> dst
     esac
+    target="${target#+}"             # force-push shorthand: +main -> main
     target="${target#refs/heads/}"
 
     case "$target" in
-      __ALL__)     br="all branches"; tclass="MAIN" ;;      # includes protected
-      __CURRENT__) br="$(current_branch "${cdir:-$cwd}")"
-                   [ -n "$br" ] || return 0                 # not a repo -> git will fail
-                   tclass="$(class_of "$br")" ;;
-      *)           br="$target"; tclass="$(class_of "$br")" ;;
+      __ALL__)          br="all branches"; tclass="MAIN" ;;   # includes protected
+      __CURRENT__|HEAD) br="$(current_branch "${cdir:-$cwd}")" # HEAD pushes the current branch
+                        [ -n "$br" ] || return 0              # not a repo -> git will fail
+                        tclass="$(class_of "$br")" ;;
+      *)                br="$target"; tclass="$(class_of "$br")" ;;
     esac
   else
     br="$(current_branch "${cdir:-$cwd}")"
