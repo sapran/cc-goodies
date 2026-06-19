@@ -78,12 +78,13 @@ ALLOW_SUDO="${SHELL_GUARD_ALLOW_SUDO:-$(conf_get SHELL_GUARD_ALLOW_SUDO)}"
 # A download whose output reaches an interpreter — through any number of pipe
 # stages, an optional env/var/sudo prefix before the shell, and a wider set of
 # interpreters (sh/bash/zsh/dash/ksh + python/perl/ruby/node/php).
-NET_RE='(curl|wget|fetch)([^|]*\|)+[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+|env[[:space:]]+|sudo[[:space:]]+)*(sh|bash|zsh|dash|ksh|python[0-9.]*|perl|ruby|node|php)([[:space:]]|-|$)'
-# Process substitution fed to an interpreter incl. source/. — `bash <(curl …)`.
-NETSUB_RE='(sh|bash|zsh|dash|ksh|source|\.)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*<\((curl|wget|fetch)'
-# Command substitution fed to an interpreter — `bash -c "$(curl …)"`.
-NETCMDSUB_RE='(sh|bash|zsh|dash|ksh)[[:space:]][^=]*\$\([[:space:]]*(curl|wget|fetch)'
-DEV_RE='>[[:space:]]*["'"'"']?/dev/(disk|rdisk|sd|hd|nvme|vd)'
+NET_RE='(curl|wget|fetch)([^|]*\|)+[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+|env[[:space:]]+|sudo[[:space:]]+|xargs([[:space:]]+-[^[:space:]]+)*[[:space:]]+)*(sh|bash|zsh|dash|ksh|pwsh|python[0-9.]*|perl|ruby|node|php)([[:space:]]|-|$|[);&|}])'
+# Process substitution fed to an interpreter incl. source/. and a `< <(curl …)` stdin redirect.
+NETSUB_RE='(sh|bash|zsh|dash|ksh|source|\.)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*(<[[:space:]]*)?<\((curl|wget|fetch)'
+# Command substitution fed to an interpreter — `bash -c "$(curl …)"`, `python -c "$(curl …)"`.
+NETCMDSUB_RE='(sh|bash|zsh|dash|ksh|pwsh|python[0-9.]*|perl|ruby|node|php)[[:space:]][^=]*\$\([[:space:]]*(curl|wget|fetch)'
+# Redirect onto a raw disk device — `> /dev/disk0`, `>| /dev/disk0`, quoted target.
+DEV_RE='>[|]?[[:space:]]*["'"'"']?/dev/(disk|rdisk|sd|hd|nvme|vd)'
 FORK_RE='([A-Za-z_:][A-Za-z0-9_:]*)\(\)[[:space:]]*\{(.*)\}'
 # The `: >` truncate-to-empty idiom: a segment that starts with `:` then a
 # single `>` redirect. (A bare `> file` is an ordinary redirect — not matched.)
@@ -116,6 +117,13 @@ is_cata_target() {
     /usr|/etc|/bin|/sbin|/lib|/lib64|/var|/boot|/sys|/proc|/dev|/opt|/root|/run|/home|/Users|/System|/Library|/Applications|/Volumes)
       return 0 ;;
   esac
+  # A glob-all of a top-level system dir's contents — `/usr/*`, `/etc/*` — is just as fatal.
+  case "$t" in
+    */\*) case "${d%/\*}" in
+            /usr|/etc|/bin|/sbin|/lib|/lib64|/var|/boot|/sys|/proc|/dev|/opt|/root|/run|/home|/Users|/System|/Library|/Applications|/Volumes)
+              return 0 ;;
+          esac ;;
+  esac
   if [ -n "${CWD:-}" ] && [ "$CWD" = "$HOME" ]; then
     case "$t" in '.'|'./'|'*'|'.*'|'./*') return 0 ;; esac
   fi
@@ -128,24 +136,47 @@ eval_tokens() {
   set -- $1
   [ $# -gt 0 ] || return 0
 
-  # Walk past benign prefixes / shell keywords to the real command word.
-  # `sudo` is blocked outright by default (privilege escalation); with
-  # SHELL_GUARD_ALLOW_SUDO set it's treated as a prefix so the wrapped command
-  # is still inspected (e.g. `sudo rm -rf /` is caught by the rm check below).
+  # Walk past leading redirections, command wrappers, and shell keywords to the real
+  # command word. `sudo` is blocked outright by default (privilege escalation); with
+  # SHELL_GUARD_ALLOW_SUDO set it's treated as a prefix so the wrapped command is still
+  # inspected. Wrappers (timeout/setsid/env/xargs/…) are matched by basename so
+  # `/usr/bin/env rm -rf /` is handled; sw=1 once we are past a prefix lets a wrapper's
+  # own options (`env -i`, `nice -n 5`) be skipped without swallowing a bare command.
+  sw=0
   while [ $# -gt 0 ]; do
     case "$1" in
+      '>'|'>>'|'<'|'<<'|'<<<'|'>|'|'&>'|'&>>'|[0-9]'>'|[0-9]'>>'|[0-9]'<')
+        sw=1; shift; [ $# -gt 0 ] && shift; continue ;;   # redirect op + its target token
+      [0-9]*'>'*|[0-9]*'<'*|'>'*|'<'*|'&>'*)
+        sw=1; shift; continue ;;                          # redirect glued to target: >/tmp/x
+    esac
+    w="${1##*/}"; w="${w#\\}"; w="${w//\"/}"; w="${w//\'/}"   # basename for wrapper match
+    case "$w" in
       sudo)
         if [ -z "${ALLOW_SUDO:-}" ] || [ "$ALLOW_SUDO" = "0" ]; then
           deny "sudo — privilege escalation (set SHELL_GUARD_ALLOW_SUDO=1 to permit)"; return 2
         fi
-        shift ;;
-      *=*|command|exec|builtin|nice|nohup|time|env|then|do|else) shift ;;
-      *) break ;;
+        sw=1; shift; continue ;;
+      command|exec|builtin|nice|nohup|time|env|setsid|stdbuf|ionice|chrt|then|do|else)
+        sw=1; shift; continue ;;
+      timeout)   # timeout [opts] DURATION cmd — skip opts and the duration
+        sw=1; shift
+        while [ $# -gt 0 ]; do case "$1" in -*) shift ;; *) shift; break ;; esac; done
+        continue ;;
+      xargs)     # xargs [opts] cmd — skip opts to reach the command it runs
+        sw=1; shift
+        while [ $# -gt 0 ]; do case "$1" in -*) shift ;; *) break ;; esac; done
+        continue ;;
+    esac
+    case "$1" in
+      *=*) sw=1; shift; continue ;;                       # VAR=val prefix
+      -*)  if [ "$sw" = 1 ]; then shift; continue; else break; fi ;;  # a wrapper's option
+      *)   break ;;
     esac
   done
   [ $# -gt 0 ] || return 0
   c="$1"; shift
-  c="${c##*/}"; c="${c#\\}"; c="${c//\"/}"; c="${c//\'/}"   # basename + de-quote (/bin/rm, \rm -> rm)
+  c="${c##*/}"; c="${c#\\}"; c="${c//\\/}"; c="${c//\"/}"; c="${c//\'/}"   # basename + de-quote + de-backslash
 
   case "$c" in
     rm)
@@ -175,16 +206,17 @@ eval_tokens() {
       deny "filesystem creation/wipe ($c)"; return 2
       ;;
     find)
-      # `find <protected path> … -delete` recursively unlinks like `rm -rf`.
-      fdel=0; fcata=0
+      # `find <protected path> … -delete` (or `-exec`/`-ok` a command) over a
+      # catastrophic path recursively destroys like `rm -rf`.
+      fdestroy=0; fcata=0
       for a in "$@"; do
         case "$a" in
-          -delete) fdel=1 ;;
+          -delete|-exec|-execdir|-ok|-okdir) fdestroy=1 ;;
           -*) : ;;
           *) is_cata_target "$a" && fcata=1 ;;
         esac
       done
-      [ "$fdel" = 1 ] && [ "$fcata" = 1 ] && { deny "find -delete of a protected path"; return 2; }
+      [ "$fdestroy" = 1 ] && [ "$fcata" = 1 ] && { deny "destructive find over a protected path"; return 2; }
       ;;
     shred)
       for a in "$@"; do
@@ -271,6 +303,15 @@ evaluate_segment() {
       deny "fork bomb"; return 2
     fi
   fi
+  # An interpreter running an inline script string — recurse into the -c argument so
+  # `bash -c "rm -rf /"` (or `timeout 5 bash -c "…"`) is judged like a normal command.
+  if [[ "$seg" =~ (^|[^[:alnum:]_])(sh|bash|zsh|dash|ksh)[[:space:]]+(-[A-Za-z]+[[:space:]]+)*-[A-Za-z]*c[[:space:]]+(.*)$ ]]; then
+    inner="${BASH_REMATCH[4]}"
+    inner="${inner%\"}"; inner="${inner#\"}"; inner="${inner%\'}"; inner="${inner#\'}"
+    if [ -n "$inner" ] && [ "$inner" != "$seg" ]; then
+      evaluate_segment "$inner" || return 2
+    fi
+  fi
   # User-supplied extra patterns (ERE), ;- or newline-separated.
   if [ -n "${EXTRA:-}" ]; then
     while IFS= read -r pat; do
@@ -291,7 +332,7 @@ EOF2
     [ -n "$stage" ] || continue
     eval_tokens "$stage" || return 2
   done <<EOF_STAGE
-$(printf '%s\n' "$seg" | awk '{gsub(/[|&(){}]/,"\n")}1')
+$(printf '%s\n' "$seg" | awk '{gsub(/[|&(){}]/,"\n"); gsub(/\140/,"\n")}1')
 EOF_STAGE
   return 0
 }
