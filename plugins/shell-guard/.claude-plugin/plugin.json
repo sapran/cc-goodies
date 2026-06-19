@@ -1,7 +1,7 @@
 {
   "name": "shell-guard",
-  "version": "0.2.0",
-  "description": "Block a curated set of dangerous shell commands (rm -rf / or ~, dd to a disk, mkfs, fork bombs, curl|sh, file truncation, chmod 777, eval, sudo, reboot/shutdown) before they run. Covers a typical shell deny list; fail-open, configurable.",
+  "version": "0.3.0",
+  "description": "Block a small set of catastrophic shell commands (rm -rf / or ~, dd/redirect to a disk, mkfs, fork bombs, curl|sh, chmod 777, eval, sudo, reboot/shutdown) before they run. Catches plain-form accidents; fail-open, configurable.",
   "author": {
     "name": "Volodymyr Styran",
     "url": "https://github.com/sapran"

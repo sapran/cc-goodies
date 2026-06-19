@@ -1,10 +1,10 @@
 # shell-guard
 
-A `PreToolUse` hook that **blocks a curated set of dangerous shell commands before
+A `PreToolUse` hook that **blocks a small set of catastrophic shell commands before
 they run**. When Claude's Bash tool tries something that would wipe your home
-directory, reformat a disk, pipe a download straight into a shell, truncate a file to
-nothing, escalate with `sudo`, or halt the machine, the command is denied (exit 2) and
-Claude is told why — instead of finding out afterwards.
+directory, reformat a disk, pipe a download straight into a shell, escalate with
+`sudo`, or halt the machine, the command is denied (exit 2) and Claude is told why —
+instead of finding out afterwards.
 
 It only ever gates **Claude's Bash tool**. You can still run any command yourself in
 a terminal.
@@ -21,65 +21,66 @@ and reports back instead of running it). For `rm -rf ~`:
 ```
 
 The text after the dash names the matched rule (e.g. `network download piped into a
-shell`, `dd onto a device node`, `sudo — privilege escalation`).
+shell`, `dd onto a raw disk device`, `sudo — privilege escalation`).
 
-shell-guard is designed to **cover — and improve on — a typical `permissions.deny`
-shell list** in `~/.claude/settings.json`. That list matches command *strings* exactly,
-so it misses re-ordered flags, extra spaces, or `$HOME` in place of `~`; shell-guard
-normalises the flags and resolves the target, catching the obfuscated variants string
-matching misses. It is a convenience guard, not a sandbox — keep real OS-level backups
-and protections too. (Permission `deny` rules and this hook are independent layers; you
-can run both, but shell-guard is meant to let you retire the shell half of your deny
-list.)
+shell-guard is designed to **cover a typical `permissions.deny` shell list** in
+`~/.claude/settings.json`. That list matches command *strings* exactly, so it misses
+re-ordered flags, extra spaces, or `$HOME` in place of `~`; shell-guard resolves the
+target and skips common wrappers, catching variants exact matching misses. It is a
+convenience guard, not a sandbox — keep real OS-level backups and protections too.
+(Permission `deny` rules and this hook are independent layers; you can run both, but
+shell-guard is meant to let you retire the shell half of your deny list.)
 
 ## What it blocks
 
-Each is matched after normalising flags/spacing, not by naïve substring match:
+It resolves the real command word (after skipping common wrappers) and the target, so
+it catches re-ordered flags and `$HOME`-for-`~` variants a string list misses — but it
+stays a small, high-confidence set:
 
 - **Recursive delete of a protected path** — `rm -rf` / `-fr` / `-r --force` /
   `--recursive --force` (any order) whose target is `/`, `/*`, `~`, `$HOME`, a
   top-level system dir (`/usr`, `/etc`, `/System`, `/Library`, …), or — only when the
   session's cwd **is** your home directory — a bare `*` / `.*` / `.`. Also any
   `rm --no-preserve-root`.
-- **`dd` onto a device** — `dd … of=/dev/…`.
+- **`dd` onto a raw disk device** — `dd … of=/dev/disk*` / `rdisk*` / `sd*` / `hd*` /
+  `nvme*` / `vd*` (but **not** `dd … of=/dev/null` or `of=file`).
 - **Filesystem create/wipe** — `mkfs`, `mkfs.*`, `wipefs`, `newfs`, `newfs_*`.
 - **Destructive `diskutil`** — `eraseDisk`, `eraseVolume`, `reformat`, `zeroDisk`,
   `secureErase`, `partitionDisk`, `eraseall`, `apfs delete*`/`apfs erase*`.
-- **Overwrite a raw disk device** — a `>` redirect, or `dd of=`, `cp`, or `tee`
-  whose target is `/dev/disk*`, `/dev/rdisk*`, `/dev/sd*`, `/dev/hd*`, `/dev/nvme*`,
-  `/dev/vd*` (but **not** `/dev/null`, `/dev/zero`, a tty…).
-- **Recursive unlink without `rm`** — `find <protected path> … -delete`, or
-  `find <protected path> … -exec` running a *mutating* command (rm/mv/chmod/shred/…);
-  a read-only `-exec grep/cat/ls/…` over a system dir is allowed. Also `shred` of a
-  raw disk device or a protected path.
+- **Redirect onto a raw disk device** — a `>`/`>|` redirect whose target is
+  `/dev/disk*`, `/dev/rdisk*`, `/dev/sd*`, `/dev/hd*`, `/dev/nvme*`, `/dev/vd*` (but
+  **not** `/dev/null`, `/dev/zero`, a tty…).
 - **Fork bomb** — a function that pipes and backgrounds a call to itself
   (`:(){ :|:& };:` and renamed variants).
-- **Network download fed to an interpreter** — `curl`/`wget`/`fetch` reaching a
-  shell or language runtime (`sh`/`bash`/`zsh`/`dash`/`ksh`/`pwsh`, `python`/`perl`/
-  `ruby`/`node`/`php`/`deno`/`bun`/`Rscript`/`lua`/`tclsh`/`osascript`) through one or
-  more pipe stages (incl. via `sudo`/`env`/`xargs`/a `VAR=…` prefix), process
-  substitution (`bash <(curl …)`, `source <(curl …)`), or command substitution
-  (`bash -c "$(curl …)"`).
-- **Truncate a file to empty** — the `: > file` idiom and `truncate -s 0` /
-  `--size=0` (but **not** a plain `> file` redirect, nor `: >> file` append).
-- **`chmod 777`** — world-writable permissions (`chmod 777` / `0777`, recursive or not).
+- **Network download fed to an interpreter** — a `curl`/`wget`/`fetch` pipeline stage
+  followed by a shell or language runtime (`sh`/`bash`/`zsh`/`dash`/`ksh`,
+  `python`/`perl`/`ruby`/`node`/`php`), e.g. `curl … | bash`. Detected by **pipeline
+  stage**, so a dangerous string inside a quoted argument (`echo "curl … | bash"`) is
+  **not** a false positive.
+- **Truncate a file to empty** — the `: > file` idiom (but **not** a plain `> file`
+  redirect, nor `: >> file` append).
+- **`chmod 777`** — world-writable permissions (`chmod 777` / `0777`).
 - **`eval`** — arbitrary code execution.
 - **Privilege escalation** — `sudo`, `su`, `doas`, `runuser`, `pkexec`, `gosu`,
-  `sudoedit`, `setpriv`, blocked by default (opt out with `SHELL_GUARD_ALLOW_SUDO=1`;
-  see **Configure**). Also `find -exec`/`-ok` of a mutating command through a wrapper.
-- **System halt/reboot** — `reboot`, `shutdown`, `halt`, `poweroff`, `init 0`/`init 6`.
+  `sudoedit`, `setpriv`.
+- **System halt/reboot** — `reboot`, `shutdown`, `halt`, `poweroff`.
 - Anything in your `SHELL_GUARD_EXTRA_PATTERNS` (see **Configure**).
 
-Compound commands are split on `&&`, `||`, `;`, newlines, and — for the per-command
-checks — single pipes, background `&`, subshells `( )`, brace groups `{ }` and
-backtick substitution, so `git pull && rm -rf /`, `true | rm -rf /`, `(rm -rf /)` and
-`echo \`rm -rf /\`` are all caught. Common wrappers are unwrapped too — with their
-options and option *values*, so `timeout -s KILL 5 rm -rf /` and `xargs -n 1 rm -rf /`
-don't hide the command: `timeout`, `setsid`, `nice`/`chrt`/`ionice`/`taskset`,
-`env`/`env -i`, `xargs`, `stdbuf`, and `bash -c "<script>"` (the `-c` string is
-re-checked). Best-effort, not a sandbox — a target supplied at runtime via stdin
-(`echo / | xargs rm -rf`), a two-step download-then-run, a hex/`$'\x..'`-encoded
-command name, or variable indirection can still hide a command.
+Compound commands are split on `&&`, `||`, `;`, newlines, single pipes, background `&`,
+subshells `( )` and brace groups `{ }`, so `git pull && rm -rf /`, `true | rm -rf /`
+and `(rm -rf /)` are all caught. Common wrappers are skipped too — `env`, `timeout`,
+`nice`, `setsid`, `stdbuf`, `ionice`, `xargs`, `nohup`, `time` (with their flags and a
+leading numeric arg like `timeout 5`) — so `timeout 5 rm -rf /` and `env FOO=1 rm -rf ~`
+don't hide the command.
+
+> **Scope: accidents, not evasion.** shell-guard catches an aligned agent's *plain*
+> mistake. It does **not** try to defeat a deliberately hidden command — an
+> option-value-wrapped form (`timeout -s KILL 5 …`), a `bash -c "…"` string, a
+> `$'\x..'`-encoded name, a target piped in via stdin, or `eval`/variable indirection
+> all pass through. That is deliberate: a static text hook cannot win that race, and
+> chasing it is what turned the previous version into a 395-line liability that also
+> tripped on ordinary work. Plan mode (confirm-before-run) is the backstop for the
+> deliberate case.
 
 ## What it deliberately allows
 
@@ -89,13 +90,18 @@ The block list is intentionally tight to avoid breaking normal work:
 - `rm -rf /usr/local/lib/node_modules/foo` — a deep path under a system dir (only the
   bare top-level dir is protected).
 - `rm -rf *` **outside** your home directory.
-- `dd if=a.img of=out.img` — `dd` to a regular file.
+- `dd if=a.img of=out.img`, `dd if=x of=/dev/null` — `dd` to a regular file or `/dev/null`.
 - `curl … | jq`, `curl … | ssh host`, `curl … -o file` — downloads that don't feed a shell.
-- `echo "rm -rf /"` — the dangerous text is an argument, not the command.
+- `echo "rm -rf /"`, `echo "curl … | bash"` — the dangerous text is a quoted argument,
+  not the command being run.
 - `git init`, `terraform init`, `npm run reboot-staging` — the trigger word is a
-  subcommand or substring, not the command being run.
+  subcommand or substring, not the command.
 - `> file`, `echo x > log`, `: >> append.log` — ordinary redirects and appends.
-- `truncate -s 100M img`, `chmod 755 x`, `chmod +x x`, `chmod -R 755 ./app` — non-destructive forms.
+- `chmod 755 x`, `chmod +x x`, `chmod -R 755 ./app` — non-`777` permission changes.
+- `find … -delete`, `shred secret.key`, `truncate -s 0 cache.db`, `cp x /dev/disk0`,
+  `init 0` — **no longer blocked**: dropped as low-accident-probability or
+  out-of-category in the back-to-basics pass (see the scope note above). Re-add any you
+  want via `SHELL_GUARD_EXTRA_PATTERNS`.
 
 ## Install
 
@@ -116,7 +122,6 @@ command, so changes take effect immediately — no restart.
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `SHELL_GUARD_DISABLE` | *(unset)* | Set to `1` to pause the guard without uninstalling |
-| `SHELL_GUARD_ALLOW_SUDO` | *(unset)* | Set to `1` to permit privilege escalation — `sudo`/`su`/`doas`/`runuser` (blocked by default) |
 | `SHELL_GUARD_EXTRA_PATTERNS` | *(unset)* | Extra ERE block patterns, `;`- or newline-separated |
 
 `SHELL_GUARD_EXTRA_PATTERNS` are raw regular expressions matched against each command
@@ -165,14 +170,14 @@ line in `~/.claude/shell-guard.conf`): the guard no-ops but stays installed.
 
 ## Limitations
 
-- **Best-effort shell parsing.** Common wrappers, pipes, subshells, backticks and
-  `bash -c` strings are handled, but a few classes are irreducible for a static
-  text guard and still pass: a destructive target supplied at **runtime via stdin**
-  (`echo / | xargs rm -rf`, `find / … | xargs rm`), a **two-step** download-then-run
-  (`curl -o /tmp/x …; bash /tmp/x`), a **hex/`$'\x..'`-encoded** command name,
-  `eval`/variable indirection, and a rare value-taking wrapper option outside the
-  table (`exec -a NAME`, `/usr/bin/time -o FILE`). This is a convenience guard, not a
-  sandbox — pair it with real backups and OS-level protections for anything that matters.
+- **Accidents, not evasion (by design).** shell-guard skips only common, non-evasive
+  prefixes and matches plain command forms. Anything deliberately hidden — an
+  option-value-wrapped command (`timeout -s KILL 5 …`), a `bash -c "…"` string, a
+  `$'\x..'`-encoded name, a target supplied at **runtime via stdin** (`echo / | xargs
+  rm -rf`), a two-step download-then-run, or `eval`/variable indirection — passes
+  straight through. A static text hook cannot win that race; plan mode is the backstop.
+  This is a convenience guard, not a sandbox — keep real backups and OS-level
+  protections for anything that matters.
 - **Curated, not exhaustive.** It targets a high-confidence catastrophic set and stays
   out of the way of normal work; it will not catch every destructive command. Add your
   own via `SHELL_GUARD_EXTRA_PATTERNS`.
