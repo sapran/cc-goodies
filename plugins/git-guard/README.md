@@ -44,8 +44,11 @@ like a commit. The protected-branch list is `GIT_GUARD_MAIN_BRANCHES` (default
 /plugin install git-guard@cc-goodies
 ```
 
-The hook activates on install (restart or `/hooks` to load it). Run `/git-guard` any
-time to view or change its settings.
+Installing the plugin is the whole install — the hook is declared inline in the plugin
+manifest, so it activates on install (restart or `/hooks` to load it the first time) and
+stays active across plugin updates. There is no separate hook-install step and nothing is
+written to `settings.json`. Run `/git-guard` any time to view, pause/resume, or change its
+settings.
 
 ## Configure
 
@@ -69,6 +72,13 @@ GIT_GUARD_BLOCK_ALL_PUSH=1
 The easiest way to edit it is the `/git-guard` command, which shows the current
 state and writes the file for you.
 
+## Pause / resume
+
+To turn the guard off without uninstalling, **pause** it — set `GIT_GUARD_DISABLE=1` (via
+`/git-guard`, or as a line in `~/.claude/git-guard.conf`): the hook no-ops but stays
+installed. **Resume** by clearing it (remove the line or set `GIT_GUARD_DISABLE=0`).
+`/git-guard` offers pause and resume as explicit choices.
+
 ## Uninstall
 
 ```text
@@ -76,10 +86,7 @@ state and writes the file for you.
 /plugin uninstall git-guard@cc-goodies
 ```
 
-`/git-guard-uninstall` deletes the `~/.claude/git-guard.conf` it created (after confirmation); `/plugin uninstall` then removes the plugin and its hook.
-
-To **pause** without removing, set `GIT_GUARD_DISABLE=1` (via `/git-guard`, or as a
-line in `~/.claude/git-guard.conf`): the guard no-ops but stays installed.
+`/git-guard-uninstall` deletes the `~/.claude/git-guard.conf` it created (after confirmation); `/plugin uninstall` then removes the plugin and its hook. To turn the guard off **without** removing it, see [Pause / resume](#pause--resume) above.
 
 ## What it catches
 

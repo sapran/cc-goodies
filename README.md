@@ -35,7 +35,7 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 /rtk-hook-install
 ```
 
-Install any subset — they don't depend on each other. `/statusline-install` and `/rtk-hook-install` are one-time wiring steps: the first is needed only if you installed the statusline; the second is an optional cleanup most people skip — it only removes a `rtk hook claude` entry you hand-wired into `settings.json` yourself (RTK itself is a separate prerequisite: `brew install rtk`).
+Install any subset — they don't depend on each other. The hook plugins (`voice-notify`, `git-guard`, `shell-guard`, `rtk-hook`) need no wiring: their hooks are declared inline in `plugin.json`, so `/plugin install` is the whole install and the hook stays active across updates. Pause the guards any time without uninstalling via `/git-guard` / `/shell-guard` (or `CLAUDE_VOICE_NOTIFY=off` for voice-notify). `/statusline-install` and `/rtk-hook-install` are one-time wiring steps: the first is needed only if you installed the statusline; the second is an optional cleanup most people skip — it only removes a `rtk hook claude` entry you hand-wired into `settings.json` yourself (RTK itself is a separate prerequisite: `brew install rtk`).
 
 ## Uninstall
 

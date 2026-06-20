@@ -7,6 +7,23 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Changed
+
+- **`git-guard` / `shell-guard` pause/resume is now a first-class choice.** `/git-guard`
+  and `/shell-guard` lead with the guard's current `ON`/`PAUSED` state and present **pause**
+  and **resume** as explicit menu options (writing or clearing `GIT_GUARD_DISABLE` /
+  `SHELL_GUARD_DISABLE`), preserving any other keys. No behaviour change to the hooks
+  themselves — the `*_DISABLE` toggle already existed; this just surfaces it instead of
+  burying it in an "enable/disable" sub-bullet. Each guard README gains a **Pause / resume**
+  section.
+- **Docs clarify how hook plugins activate.** The `git-guard`, `shell-guard`, and
+  `voice-notify` READMEs and the two guard config commands now state that hooks are declared
+  inline in `plugin.json`, so installing the plugin is the whole install — the hook
+  activates on install, stays active across plugin updates, and writes nothing to
+  `settings.json` (there is no separate hook-install step, and an inline hook can't be
+  "manually uninstalled" short of removing the plugin). `voice-notify` documents
+  `CLAUDE_VOICE_NOTIFY=off` as its pause/mute path.
+
 ## [0.2.0] - 2026-06-20
 
 ### Added

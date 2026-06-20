@@ -15,7 +15,10 @@ Phrases rotate randomly so it never feels robotic.
 /plugin install voice-notify@cc-goodies
 ```
 
-The hooks activate on install (you may need `/hooks` or a restart to load them the first time).
+Installing the plugin is the whole install — the hooks are declared inline in the plugin
+manifest, so they activate on install (you may need `/hooks` or a restart to load them the
+first time) and stay active across plugin updates. There is no separate hook-install step
+and nothing is written to `settings.json`.
 
 ## Configuration
 
@@ -25,6 +28,13 @@ Set these as environment variables (shell profile, or Claude Code's `env` settin
 |----------|--------|
 | `CLAUDE_VOICE` | Voice to use. Default `Matilda (Premium)`; falls back to the system default if not installed. List options with `say -v '?'`. |
 | `CLAUDE_VOICE_NOTIFY=off` | Mute without uninstalling. |
+
+### Pause / mute
+
+To silence the notifications without uninstalling, set `CLAUDE_VOICE_NOTIFY=off` (as an
+environment variable in your shell profile, or Claude Code's `env` setting). Unset it — or
+set it to `on` — to resume. This is voice-notify's pause path: there's no config file or
+command, because the plugin is env-var only and writes nothing outside its own directory.
 
 ## Prerequisites
 

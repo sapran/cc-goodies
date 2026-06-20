@@ -110,8 +110,11 @@ The block list is intentionally tight to avoid breaking normal work:
 /plugin install shell-guard@cc-goodies
 ```
 
-The hook activates on install (restart or `/hooks` to load it). Run `/shell-guard` any
-time to pause it or add extra patterns.
+Installing the plugin is the whole install — the hook is declared inline in the plugin
+manifest, so it activates on install (restart or `/hooks` to load it the first time) and
+stays active across plugin updates. There is no separate hook-install step and nothing is
+written to `settings.json`. Run `/shell-guard` any time to pause/resume it or add extra
+patterns.
 
 ## Configure
 
@@ -134,6 +137,13 @@ SHELL_GUARD_EXTRA_PATTERNS="git clean -fdx"
 
 The easiest way to edit it is the `/shell-guard` command, which shows the current state
 and writes the file for you.
+
+## Pause / resume
+
+To turn the guard off without uninstalling, **pause** it — set `SHELL_GUARD_DISABLE=1` (via
+`/shell-guard`, or as a line in `~/.claude/shell-guard.conf`): the hook no-ops but stays
+installed. **Resume** by clearing it (remove the line or set `SHELL_GUARD_DISABLE=0`).
+`/shell-guard` offers pause and resume as explicit choices.
 
 ## Advisory companion
 
@@ -163,10 +173,8 @@ advisory text — nothing executes; `rm` the symlink to opt out.
 ```
 
 `/shell-guard-uninstall` deletes the `~/.claude/shell-guard.conf` it created (after
-confirmation); `/plugin uninstall` then removes the plugin and its hook.
-
-To **pause** without removing, set `SHELL_GUARD_DISABLE=1` (via `/shell-guard`, or as a
-line in `~/.claude/shell-guard.conf`): the guard no-ops but stays installed.
+confirmation); `/plugin uninstall` then removes the plugin and its hook. To turn the guard
+off **without** removing it, see [Pause / resume](#pause--resume) above.
 
 ## Limitations
 
