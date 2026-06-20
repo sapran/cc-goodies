@@ -7,6 +7,16 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added
+
+- **`rtk-hook` gains a `/rtk-hook` control panel and a pause switch.** The hook script now
+  reads `~/.claude/rtk-hook.conf` and honours `RTK_HOOK_DISABLE=1` (env > conf > default), so
+  RTK rewriting can be paused without uninstalling — commands then run unrewritten. The new
+  `/rtk-hook` command leads with the `ON`/`PAUSED` state, offers pause/resume, and folds in the
+  old hand-wired-duplicate cleanup as a menu option. This brings rtk-hook in line with the
+  `git-guard` / `shell-guard` shape (a `/<name>` control command plus a conf file), and adds a
+  small `tests/` harness.
+
 ### Changed
 
 - **`git-guard` / `shell-guard` blocks now hand the command back as a copy-paste
@@ -32,6 +42,18 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   `settings.json` (there is no separate hook-install step, and an inline hook can't be
   "manually uninstalled" short of removing the plugin). `voice-notify` documents
   `CLAUDE_VOICE_NOTIFY=off` as its pause/mute path.
+- **Install ⇄ uninstall rule softened — hook plugins need no install command.** `CLAUDE.md`,
+  `README.md` and `CONTRIBUTING.md` now state that an inline hook self-activates on `/plugin
+  install`, so a `/<name>-install` command is only for durable-state setup (e.g. `statusline`'s
+  `statusLine` key); a `/<name>-uninstall` can stand alone, and the revert may live in the
+  `/<name>` control command. The symmetry is about reversible *verbs*, not a mandatory
+  install/uninstall command pair.
+
+### Removed
+
+- **`/rtk-hook-install`** — folded into `/rtk-hook` (option [3], "remove hand-wired duplicate").
+  `/rtk-hook-uninstall` now also deletes `~/.claude/rtk-hook.conf`; its settings.json restore
+  step is unchanged.
 
 ## [0.2.0] - 2026-06-20
 
