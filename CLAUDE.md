@@ -18,7 +18,7 @@ Claude Code plugins. Each lives under `plugins/<name>/` and is installable on it
 | `voice-notify` | hooks | macOS `say`; Notification + Stop hooks |
 | `git-guard` | hook + commands | cross-platform; PreToolUse/Bash guard against writes to protected branches |
 | `shell-guard` | hook + commands | cross-platform; PreToolUse/Bash guard that hard-blocks a small catastrophic-command set (`rm -rf ~`, `dd`/redirect to device, `mkfs`, fork bombs, `curl\|sh`, `: >`, `chmod 777`, `eval`, `sudo`, reboot/shutdown). Covers a typical `settings.json` shell deny list; catches plain-form accidents — deliberate evasion is out of scope (plan-mode backstop) |
-| `rtk-hook` | hook + commands | cross-platform; wraps `rtk hook claude` as a PreToolUse/Bash hook (no-ops if `rtk` absent). `/rtk-hook-install` removes the hand-wired `settings.json` duplicate; `/rtk-hook-uninstall` offers to restore it |
+| `rtk-hook` | hook + commands | cross-platform; wraps `rtk hook claude` as a PreToolUse/Bash hook (no-ops if `rtk` absent). `/rtk-hook` is the control panel — pause/resume (`RTK_HOOK_DISABLE` in `~/.claude/rtk-hook.conf`) or remove a hand-wired `settings.json` duplicate; `/rtk-hook-uninstall` deletes the conf and offers to restore the hand-wired entry |
 | `session-finalise` | skill + command | cross-platform; auto-activating end-of-session checklist (durable memory, handoff, tracker updates, commit/stash, cleanup) plus `/session-finalise`, confirming every irreversible step. Writes nothing outside its dir, so `/plugin uninstall` is the full revert |
 | `project-scope` | skill + command | cross-platform (Claude Desktop MCP step macOS-only, degrades); auto-activating skill + `/project-scope <theme>` that scopes a project's plugins/MCPs/skills to a theme via consented project-scope install/uninstall + `.claude/settings.json` (skill overrides, denied MCPs, `skillListingBudgetFraction`). Project scope only; writes nothing outside its dir on install, so `/plugin uninstall` is the full revert |
 
@@ -28,19 +28,32 @@ it in sync when you change what a guard catches.
 
 ## Install ⇄ uninstall symmetry (required)
 
-Every plugin ships a documented, **symmetric install and uninstall path**. A change that
-adds an install or setup step without its documented inverse is incomplete.
+Every plugin ships a documented, **symmetric install and uninstall path** — whatever a setup
+step does is reversible by a documented inverse. A change that adds setup without its teardown
+is incomplete. This is about *verbs*, **not** a mandate that every plugin ship a matching
+`/<name>-install` + `/<name>-uninstall` pair — most hook plugins ship neither.
 
 - **Both directions documented:** the plugin README has an **Install** and an **Uninstall**
   section, and the root `README.md` mirrors both.
-- **Every install verb has its inverse:** `marketplace add` ⇄ `marketplace remove`,
-  `/plugin install` ⇄ `/plugin uninstall`, `/<name>-install` ⇄ `/<name>-uninstall`.
-- **Durable external state needs a dedicated, ownership-guarded revert.** If install writes
-  durable state outside the plugin dir (`~/.claude/settings.json`, `~/.claude/<plugin>.conf`,
-  files under `$HOME`), ship a `/<name>-uninstall` that reverts exactly what install added,
-  backs up shared config before editing, verifies it still parses, and **refuses to touch
-  state the user configured themselves**. `statusline` and `git-guard` are the reference
-  implementations; pure-hook plugins like `voice-notify` rely on `/plugin uninstall` and say so.
+- **The hook needs no install command.** Hooks are declared inline in `plugin.json`, so
+  `/plugin install` activates them and `/plugin uninstall` removes them — that round-trip is the
+  baseline for every hook plugin. Ship a `/<name>-install` **only** when setup must write durable
+  state a plugin can't set declaratively; `statusline` is the lone example (it wires the
+  `statusLine` key, which a plugin can't set itself). `git-guard`, `shell-guard`, `rtk-hook` and
+  `voice-notify` ship none — their setup is the inline hook plus, optionally, a `/<name>` config
+  command.
+- **Each install verb you *do* ship has its inverse:** `marketplace add` ⇄ `marketplace remove`,
+  `/plugin install` ⇄ `/plugin uninstall`, and — only when present — `/<name>-install` ⇄
+  `/<name>-uninstall`.
+- **Durable external state needs a dedicated, ownership-guarded revert — even with no install
+  command.** If a plugin writes durable state outside its dir (`~/.claude/settings.json`,
+  `~/.claude/<plugin>.conf`, files under `$HOME`), ship a `/<name>-uninstall` (or fold the revert
+  into the `/<name>` control command, as `rtk-hook` does for its `settings.json` cleanup) that
+  reverts exactly that state, backs up shared config before editing, verifies it still parses, and
+  **refuses to touch state the user configured themselves**. This stands alone: the guards have a
+  `/<name>-uninstall` that deletes their conf but no `/<name>-install`. `statusline` and `git-guard`
+  are the reference implementations; pure-hook plugins like `voice-notify` rely on `/plugin
+  uninstall` and say so.
 - **Ephemeral `$TMPDIR` caches are exempt** — they self-clear and need no teardown.
 
 ## Layout

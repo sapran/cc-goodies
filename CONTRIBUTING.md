@@ -14,8 +14,10 @@ Checklist for a new or changed plugin:
 
 - [ ] The plugin README has an **Install** section and an **Uninstall** section.
 - [ ] The root `README.md` mirrors both (Install and Uninstall).
-- [ ] Every install verb has its documented inverse: `marketplace add` ⇄ `marketplace remove`,
-      `/plugin install` ⇄ `/plugin uninstall`, `/<name>-install` ⇄ `/<name>-uninstall`.
+- [ ] Each install verb you ship has its documented inverse: `marketplace add` ⇄ `marketplace
+      remove`, `/plugin install` ⇄ `/plugin uninstall`, and — only if the plugin has one —
+      `/<name>-install` ⇄ `/<name>-uninstall`. Inline hooks self-activate on `/plugin install`,
+      so a `/<name>-install` is the exception (durable-state setup like `statusline`), not the rule.
 - [ ] If install writes **durable** state outside the plugin directory
       (`~/.claude/settings.json`, `~/.claude/<plugin>.conf`, files under `$HOME`), there is a
       dedicated `/<name>-uninstall` command that:
@@ -29,12 +31,16 @@ Checklist for a new or changed plugin:
 
 Reference implementations to copy from:
 
-- **`git-guard`** and **`shell-guard`** — a hook plus a `~/.claude/<plugin>.conf` config
-  file, with a `/<name>-uninstall` that removes only that conf (after backup + confirm).
-- **`statusline`** and **`rtk-hook`** — a `/<name>-install` / `/<name>-uninstall` pair that
-  edits `~/.claude/settings.json` with `jq`: it backs up, merges/removes only its own key,
-  verifies the result still parses (`jq empty`), and refuses to touch anything you didn't
-  install.
+- **`git-guard`**, **`shell-guard`** and **`rtk-hook`** — a hook plus a `~/.claude/<plugin>.conf`
+  config file and a `/<name>` control command (pause/resume etc.), with a `/<name>-uninstall`
+  that removes only that conf (after backup + confirm) — and **no** `/<name>-install`. `rtk-hook`
+  additionally edits `~/.claude/settings.json` with `jq` (its `/rtk-hook` offers to remove a
+  hand-wired duplicate; `/rtk-hook-uninstall` offers to restore it), backing up, verifying
+  `jq empty`, and touching only its own entry.
+- **`statusline`** — a `/<name>-install` / `/<name>-uninstall` pair that edits
+  `~/.claude/settings.json` with `jq` (it can't set the `statusLine` key declaratively): it backs
+  up, merges/removes only its own key, verifies the result still parses (`jq empty`), and refuses
+  to touch anything you didn't install.
 - **`voice-notify`** — a self-contained plugin (pure hooks, no external writes) that just
   relies on `/plugin uninstall`.
 

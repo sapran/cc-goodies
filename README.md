@@ -8,7 +8,7 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 | **[statusline](plugins/statusline)** | An enriched two-line statusline: `user@host`, cwd, branch/worktree, task focus, model, effort, context % and rate-limit %. |
 | **[git-guard](plugins/git-guard)** | Blocks accidental commits/merges/pushes to protected branches (`main`/`master`) before they run. One default behaviour plus an optional block-all-push mode; configurable branches. Cross-platform. |
 | **[shell-guard](plugins/shell-guard)** | Blocks a curated set of catastrophic shell commands (`rm -rf /` or `~`, `dd` to a disk, `mkfs`, fork bombs, `curl\|sh`) before they run. Defence in depth over the deny list; configurable. Cross-platform. |
-| **[rtk-hook](plugins/rtk-hook)** | Wires RTK (Rust Token Killer) as a managed `PreToolUse` hook to cut output tokens on routine Bash commands. No-ops without the `rtk` binary. Cross-platform. |
+| **[rtk-hook](plugins/rtk-hook)** | Wires RTK (Rust Token Killer) as a managed `PreToolUse` hook to cut output tokens on routine Bash commands. Pause/resume via `/rtk-hook`; no-ops without the `rtk` binary. Cross-platform. |
 | **[session-finalise](plugins/session-finalise)** | An end-of-session checklist that preserves work, then cleans up: commit/stash, durable memory, handoff, tracker updates, scratch-file and worktree removal — confirming every irreversible step. Auto-activates on wrap-up, or run `/session-finalise`. Cross-platform. |
 | **[project-scope](plugins/project-scope)** | Scopes a project's plugins, MCP servers and skills to a stated theme — uninstalls off-theme plugins at project scope, disables user-level skills/MCPs, installs relevant ones, sets the context budget. Every change is consent-gated; project scope only. Auto-activates, or run `/project-scope <theme>`. Cross-platform. |
 
@@ -32,10 +32,9 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 /plugin install session-finalise@cc-goodies
 /plugin install project-scope@cc-goodies
 /statusline-install
-/rtk-hook-install
 ```
 
-Install any subset — they don't depend on each other. The hook plugins (`voice-notify`, `git-guard`, `shell-guard`, `rtk-hook`) need no wiring: their hooks are declared inline in `plugin.json`, so `/plugin install` is the whole install and the hook stays active across updates. Pause the guards any time without uninstalling via `/git-guard` / `/shell-guard` (or `CLAUDE_VOICE_NOTIFY=off` for voice-notify). `/statusline-install` and `/rtk-hook-install` are one-time wiring steps: the first is needed only if you installed the statusline; the second is an optional cleanup most people skip — it only removes a `rtk hook claude` entry you hand-wired into `settings.json` yourself (RTK itself is a separate prerequisite: `brew install rtk`).
+Install any subset — they don't depend on each other. The hook plugins (`voice-notify`, `git-guard`, `shell-guard`, `rtk-hook`) need no wiring: their hooks are declared inline in `plugin.json`, so `/plugin install` is the whole install and the hook stays active across updates. Pause them any time without uninstalling via `/git-guard` / `/shell-guard` / `/rtk-hook` (or `CLAUDE_VOICE_NOTIFY=off` for voice-notify). `/statusline-install` is a one-time wiring step, needed only if you installed the statusline. RTK is a separate prerequisite (`brew install rtk`); if you previously hand-wired `rtk hook claude` into `settings.json`, `/rtk-hook` offers to remove that now-duplicate entry.
 
 ## Uninstall
 
@@ -75,7 +74,7 @@ claude plugins install session-finalise@cc-goodies
 claude plugins install project-scope@cc-goodies
 ```
 
-Then, inside Claude, wire the statusline (the CLI can't set the `statusLine` key): `/statusline-install`. RTK is a separate prerequisite (`brew install rtk`); `/rtk-hook-install` is an optional cleanup.
+Then, inside Claude, wire the statusline (the CLI can't set the `statusLine` key): `/statusline-install`. RTK is a separate prerequisite (`brew install rtk`); if you hand-wired `rtk hook claude` before, `/rtk-hook` offers to remove the duplicate.
 
 **Remove everything:**
 
@@ -94,10 +93,10 @@ claude plugins uninstall session-finalise@cc-goodies
 claude plugins uninstall project-scope@cc-goodies
 claude plugins uninstall voice-notify@cc-goodies
 claude plugins marketplace remove cc-goodies
-rm -f ~/.claude/git-guard.conf ~/.claude/shell-guard.conf
+rm -f ~/.claude/git-guard.conf ~/.claude/shell-guard.conf ~/.claude/rtk-hook.conf
 ```
 
-Uninstalling the plugins removes their hooks too (hooks are declared inline in each `plugin.json`). The `rm -f` clears the two guard config files, which exist only if you customised those guards.
+Uninstalling the plugins removes their hooks too (hooks are declared inline in each `plugin.json`). The `rm -f` clears the guard and rtk-hook config files, which exist only if you customised those plugins.
 
 ## Requirements
 
@@ -109,11 +108,11 @@ See each plugin's README for configuration.
 
 ## Design principles
 
-Every plugin here is independent and opt-in, and ships a **symmetric, documented install ⇄ uninstall path**:
+Every plugin here is independent and opt-in, and ships a **symmetric, documented install ⇄ uninstall path** — whatever a setup step does is reversible by a documented inverse:
 
 - Each plugin README has both an **Install** and an **Uninstall** section; this README mirrors both.
-- Every install verb has a written inverse: `marketplace add` ⇄ `marketplace remove`, `/plugin install` ⇄ `/plugin uninstall`, `/<name>-install` ⇄ `/<name>-uninstall`.
-- Anything that writes **durable** state outside the plugin directory (e.g. `settings.json`, `~/.claude/<plugin>.conf`) ships a dedicated, ownership-guarded revert command that never removes what you set up yourself. Pure-hook plugins (no external writes) rely on `/plugin uninstall` — and say so. Ephemeral `$TMPDIR` caches are exempt.
+- Inline hooks self-activate on `/plugin install`, so most plugins ship no `/<name>-install` command. Each install verb that *is* present has a written inverse: `marketplace add` ⇄ `marketplace remove`, `/plugin install` ⇄ `/plugin uninstall`, and — where a plugin has one — `/<name>-install` ⇄ `/<name>-uninstall`.
+- Anything that writes **durable** state outside the plugin directory (e.g. `settings.json`, `~/.claude/<plugin>.conf`) ships a dedicated, ownership-guarded revert that never removes what you set up yourself — even when there's no install command (e.g. `git-guard`'s `/git-guard-uninstall` cleans its conf; `rtk-hook` folds the revert into `/rtk-hook`). Pure-hook plugins (no external writes) rely on `/plugin uninstall` — and say so. Ephemeral `$TMPDIR` caches are exempt.
 
 Contributors follow this rule — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
