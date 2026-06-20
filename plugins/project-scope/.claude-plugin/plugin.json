@@ -1,6 +1,6 @@
 {
   "name": "project-scope",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Scope a project's plugins, MCP servers and skills to a stated theme: per-bucket consented install/uninstall at project scope plus a leaner .claude/settings.json (skill overrides, denied MCPs, context budget). Project scope only; never touches global config.",
   "author": {
     "name": "Volodymyr Styran",
