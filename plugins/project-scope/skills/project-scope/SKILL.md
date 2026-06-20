@@ -39,7 +39,7 @@ For surfaces with **no** project-install primitive — user-level standalone ski
 | Surface | Key in `.claude/settings.json` | Effect |
 |---|---|---|
 | Skills (user-level standalone, e.g. `~/.claude/skills/*`) | `skillOverrides: { "skill-name": "user-invocable-only" }` | Hides from model's listing (saves per-turn tokens); `/skill-name` still works manually. Use `"off"` to also hide the slash command. |
-| MCP servers (user-scope, `.mcp.json`, **Claude Desktop config**, or **claude.ai integrations**) | `deniedMcpServers: [{ "serverName": "..." }]` | Denylist takes precedence across all scopes. Matches by raw `serverName` (no `mcp__` prefix, no `claude_ai_` prefix). One key denies the server whether it reached CC via user-scope add, `.mcp.json`, Desktop config import, a Desktop-launched CC session, or a claude.ai remote integration. |
+| MCP servers (user-scope, `.mcp.json`, **Claude Desktop config**, or **claude.ai integrations**) | `deniedMcpServers: [{ "serverName": "..." }]` | Denylist takes precedence across all scopes. Matches by raw `serverName` (no `mcp__` prefix, no `claude_ai_` prefix). One key denies the server whether it reached CC via user-scope add, `.mcp.json`, Desktop config import, a Desktop-launched CC session, or a claude.ai remote integration — and wins even when `enableAllProjectMcpServers` is true. |
 | Plugin-provided skills / MCPs | (governed by the plugin) | Follow their parent plugin's project install/uninstall — install the plugin to get them, uninstall to remove them. No separate key. |
 | Skill-listing context budget | `skillListingBudgetFraction: 0.01` (1%) … `0.05` (5%) | Fraction of context window reserved for the skill listing. Lower = aggressive truncation = leaner per-turn cost. Higher = full descriptions visible = better skill matching. Default 0.01. |
 
@@ -85,6 +85,8 @@ After update, proceed to Phase 1. The refreshed listings are written to `~/.clau
 
 ### Phase 1 — Inventory (three tiers)
 
+Re-inventory on every run, even when the theme matches a prior run — the plugin/MCP universe and marketplace contents may have changed.
+
 #### 1A. Currently active
 
 Run in parallel:
@@ -96,7 +98,10 @@ Run in parallel:
    test -f "$HOME/Library/Application Support/Claude/claude_desktop_config.json" && \
      jq -r '.mcpServers | keys[]?' "$HOME/Library/Application Support/Claude/claude_desktop_config.json"
    ```
-   Each returned name is a candidate alongside `claude mcp list` results. These MCPs surface in a CC session either when CC was launched under Claude Desktop OR after explicit `claude mcp add-from-claude-desktop` import — in both cases `deniedMcpServers` (matched by raw `serverName`) is the kill switch. Also cross-reference the session's available tool names: any `mcp__<server>__*` or `mcp__claude_ai_<Server>__*` not produced by an enabled plugin (no `mcp__plugin_*` prefix) is a Desktop or user-scope MCP that should be inventoried here.
+   Each returned name is a candidate alongside `claude mcp list` results; `deniedMcpServers` (matched by raw `serverName`) is the kill switch for all of them. **If the config is absent or unreadable** (Linux, fresh macOS, non-Desktop install): skip this step silently — CC-native inventory is sufficient. Two MCP surfaces share this denylist, with different `serverName` forms:
+   1. **Local Desktop config** (`claude_desktop_config.json` keys under `mcpServers`, e.g. `codex`, `ollama`, `libai`) — `serverName` = the bare key, copied verbatim.
+   2. **claude.ai remote integrations** (org-level Asana / Gmail / HubSpot / Ahrefs / Drive / Calendar / Context7) — never in the Desktop config, never in `claude mcp list`; they appear **only** as `mcp__claude_ai_<Name>__*` tools in the session's available-tools listing, so detect them by scanning that listing for the prefix. `serverName` = the display name with the leading "claude.ai " preserved (reverse-derive from the tool segment: `mcp__claude_ai_Google_Drive__*` → `"claude.ai Google Drive"`).
+   Also inventory any other `mcp__<server>__*` tool not produced by an enabled plugin (no `mcp__plugin_*` prefix) — a user-scope or Desktop MCP. If a Desktop name collides with a user-scope MCP of the same `serverName`, one denylist entry kills both — don't duplicate it.
 4. The list of available skills is already in the session-start `<system-reminder>` block — extract names from there. Skills with a `plugin:` prefix are governed by their plugin's enable state.
 5. Read `./CLAUDE.md` if it exists — project context.
 6. Read `./.claude/settings.json` if it exists (merge target — do NOT overwrite blindly). Read `./.claude/settings.local.json` only to know the permission allowlist already exists; leave it alone.
@@ -229,9 +234,11 @@ Construct **one** AskUserQuestion call with up to 4 questions. Skip any question
 
 For Q4, "Other" is auto-provided by AskUserQuestion — the user can supply a custom value like 4% via free text. Convert to fraction (1% → 0.01, 5% → 0.05). Validate against the schema range (>0, ≤1).
 
-If a user picks "Customize" for any bucket, accept their natural-language follow-up in the next turn (e.g. "skip optimize-image and fade-audio from disable list, keep the rest"). Apply selectively.
+If a user picks "Customize" for any bucket, accept their natural-language follow-up in the next turn (e.g. "skip optimize-image and fade-audio from disable list, keep the rest"). Apply selectively. If they don't follow up, re-prompt once, then default to "Skip" for that bucket.
 
 ##### Qci semantics (claude.ai multiSelect)
+
+Give claude.ai servers individual tickboxes (not one bundled yes/no) whenever the Qci slot is available — users keep heterogeneous subsets (deny Ahrefs, keep Gmail). Only bundle when the 5-question overflow rule below forces it.
 
 - Default-deny semantics: **unticked = denied**, **ticked = kept allowed**. Default checked state should be `false` for every option (model proposes denial; user opts back in).
 - Skip Qci entirely if Pass A contains no `mcp__claude_ai_*` servers.
@@ -255,7 +262,7 @@ Run sequentially. Order: uninstalls first, then installs.
    ```bash
    claude plugins uninstall <id> --scope project
    ```
-   Removes the plugin from THIS project's scope only; user/global scope is untouched.
+   Removes the plugin from THIS project's scope only; user/global scope is untouched. If the plugin was only user-installed and the command reports nothing to remove, treat it as already-absent and continue — never fall back to a global `uninstall` (that affects every project).
 
 2. **Install** each approved Pass B plugin (Q2 — already downloaded) and Pass C plugin (Q3 — from marketplace):
    ```bash
@@ -264,14 +271,14 @@ Run sequentially. Order: uninstalls first, then installs.
    ```
    Pass C installs download and execute plugin code locally — only run the ones the user explicitly approved (Q3). Each install can prompt for trust; run them one at a time.
 
-If any install or uninstall fails, abort the apply phase and report — don't write a half-applied settings.json. Do **not** hand-edit `enabledPlugins`; these commands own it.
+If any install or uninstall fails (network, permission, invalid manifest, trust declined), abort the apply phase and report — don't write a half-applied settings.json. Do **not** hand-edit `enabledPlugins`; these commands own it.
 
 #### 4B. Write/merge `.claude/settings.json` (disable-only surfaces + budget)
 
 Read existing `./.claude/settings.json` **after** 4A has run (the CLI may have just rewritten `enabledPlugins`). **Merge**, do not replace:
 
 - `enabledPlugins` — **do not hand-edit.** It is managed by the install/uninstall `--scope project` commands in 4A. Preserve whatever the CLI wrote; never strip or churn its entries.
-- `skillOverrides` — set `"user-invocable-only"` for every user-level standalone skill to disable (preserves `/<name>` access). Use `"off"` only if the user explicitly wants the slash command hidden too. (Plugin-provided skills are handled by uninstalling their plugin in 4A — do not list them here.)
+- `skillOverrides` — set `"user-invocable-only"` for every user-level standalone skill to disable (preserves `/<name>` access). Use `"off"` only if the user explicitly wants the slash command hidden too. (Plugin-provided skills are handled by uninstalling their plugin in 4A — do not list them here.) For a plugin-prefixed skill, key on the bare name as it appears in the system-reminder listing.
 - `deniedMcpServers` — array of `{ "serverName": "<name>" }` objects. For claude.ai integrations, the answer to **Qci** decides each entry independently: a server NOT ticked in Qci → add `{ "serverName": "claude.ai <Name>" }`; a server TICKED in Qci → omit (kept allowed). Non-claude.ai MCPs follow Q1's all/customize/skip answer as before. Merge into any pre-existing `deniedMcpServers` array — do not drop entries unrelated to this run.
 - `skillListingBudgetFraction` — set to user's Q4 choice (0.01 / 0.02 / 0.03 / 0.05 / custom). Always write this even if the user picked the default — it documents the project's chosen tier.
 - Preserve every other top-level key the file already contains (permissions, hooks, env, etc.).
@@ -285,7 +292,7 @@ Always include the JSON Schema reference at the top:
 }
 ```
 
-Use the `Edit` tool to add/merge keys when the file exists, `Write` only for first-time creation.
+Use the `Edit` tool to add/merge keys when the file exists, `Write` only for first-time creation; create the `.claude/` directory first if it's absent.
 
 ### Phase 5 — Verify
 
@@ -305,47 +312,14 @@ End-of-turn summary (≤3 sentences):
 - What needs a session restart (skill listing, budget fraction).
 - That disabled skills remain manually callable via `/<name>`, and that this only affects the current project.
 
-## Edge cases
+## Red Flags — STOP
 
-- **No `.claude/` directory**: create it before writing settings.json.
-- **`--json` output truncates** (`jq: parse error: Unfinished string at EOF`): the full `claude plugins list --available --json` pool (~330 KB) exceeds the agent's ~64 KB Bash output cap and arrives cut off, breaking jq. Never pipe the full pool; read `~/.claude/plugins/plugin-catalog-cache.json` and filter server-side (see *Reading the plugin universe*). Same caution for any `--json` that would emit the whole catalog.
-- **Cache token-model keys lag the session model** (e.g. cache has `claude-opus-4-7` while the session runs a newer opus): token-cost lookup must tolerate this — use the current model's key if present, else any opus key, else any model key. `always_on` magnitudes are close enough across models for budgeting.
-- **`enableAllProjectMcpServers` is true** in global settings: still works — `deniedMcpServers` overrides allowlists.
-- **Claude Desktop config absent or unreadable** (`~/Library/Application Support/Claude/claude_desktop_config.json` missing — e.g. Linux, fresh macOS, non-Desktop install): skip Phase 1A step 3 silently. CC-native inventory is sufficient.
-- **Desktop MCP name collides with a user-scope MCP** (same `serverName` in both surfaces): one `deniedMcpServers` entry kills both — that's correct. Don't duplicate the entry.
-- **Two Desktop-app MCP surfaces, same denylist**:
-  1. **Local Desktop config** (`claude_desktop_config.json` keys under `mcpServers`) — e.g. `codex`, `ollama`, `libai`. `serverName` = the bare key, copied verbatim from the JSON.
-  2. **claude.ai remote integrations** (org-level Asana / Gmail / HubSpot / Ahrefs / Drive / Calendar / Context7) — surface as `mcp__claude_ai_<Name>__*` tools. `serverName` for the denylist is the display name with the leading "claude.ai " preserved (e.g. `"claude.ai Asana"`, `"claude.ai Gmail"`). Sanity-check by reverse-derivation from the tool-name segment: `mcp__claude_ai_Google_Drive__*` → display name `"claude.ai Google Drive"`.
-- **Detection heuristic for claude.ai integrations**: they are never in `claude_desktop_config.json`, never in `claude mcp list`, but they DO appear as `mcp__claude_ai_*` tools in the session's available-tools listing. The skill should scan the available-tools listing for this prefix during Phase 1A step 3 to surface them.
-- **Skill is plugin-prefixed** (e.g. `superpowers:writing-skills`): `skillOverrides` keys take the bare name OR the prefixed name; prefer the bare name as it appears in the system-reminder listing.
-- **Pre-existing `enabledPlugins` entries**: managed by the install/uninstall `--scope project` commands now — leave them to the CLI; don't hand-edit or churn the key.
-- **`uninstall --scope project` on a plugin that is only user-installed (never project-scoped)**: the command cleanly removes it from project scope; if it reports nothing to remove, treat as already-absent and continue — don't fall back to a global `uninstall` (that affects every project).
-- **User stated theme is the same as last run**: still re-inventory — global plugin/MCP list and marketplace contents may have changed.
-- **Marketplace update fails for a specific marketplace** (network, auth, repo gone): continue with the others and note the partial-freshness state in Phase 3A; don't abort the run.
-- **Empty Pass C result**: if zero plugins survive the keyword filter, surface top-10-by-`unique_installs` with a "nothing matched the theme" note.
-- **Installed plugin missing from available[]**: expected — many installed plugins are de-listed from current marketplace exports. Read `<installPath>/plugin.json` directly for description.
-- **Plugin install/uninstall fails** (network, permission, manifest invalid, trust declined): abort Phase 4 before the settings.json merge; don't write a partial settings.json.
-- **User picks "Customize" but doesn't follow up**: re-prompt once, then default to "Skip" for that bucket.
-- **User picks "Other" for budget**: validate the value parses to a fraction in (0, 1]. Reject 0 or > 1 with a re-ask.
-- **More than 4 claude.ai integrations proposed for denial**: show top-4 most ambiguous as Qci tickboxes, bundle the rest into Q1's Customize text path. Surface the overflow list explicitly in Phase 3A so the user can name keep-exceptions in their reply.
-- **All 5 question slots needed (Q1+Qci+Q2+Q3+Q4)**: drop Q2 from the menu; install Pass B's already-downloaded candidates at project scope implicitly and announce it in Phase 3A. Never drop Qci or Q4.
-- **Qci ticked-state interpretation**: ticked = keep allowed (no denylist entry written), unticked = deny (denylist entry written). This inversion is intentional — the model already proposed denial; the user opts back in per-server.
+Destructive or silent-failure mistakes. If you are about to do any of these, stop:
 
-## Anti-patterns (do not)
-
-- Send all 200+ marketplace plugin descriptions to the model for evaluation. Use the keyword + `unique_installs` pre-filter over the cache file; this skill exists to *save* tokens.
-- Pipe the full `claude plugins list --available --json` pool through the tool — it exceeds the output cap and arrives truncated, corrupting jq. Read `plugin-catalog-cache.json` and filter server-side, emitting only the survivor set.
-- Sort marketplace candidates by `installCount` — that field does not exist (it's `unique_installs`); `(.installCount // 0)` silently ranks everything equal.
-- Pre-filter Pass B by id keyword-match — plugin ids and theme tokens often use different vocabulary. Read all installed-disabled plugin descriptions (one cache query); the count is small.
-- Auto-install Pass C candidates without explicit per-plugin user approval. Installing executes remote code.
-- Skip Phase 3A (the text proposal print). The user must see the full proposal before the menu, because AskUserQuestion's 4-option-per-question limit can't show every item as a tickbox.
-- Edit `~/.claude/settings.json` (global). Project scope only.
-- Hand-edit `enabledPlugins` in `.claude/settings.json` to add or remove project plugins. Use `claude plugins install|uninstall <id> --scope project` — the install/uninstall verbs are the project-scoping mechanism and the CLI owns that key; hand-editing it fights the CLI's bookkeeping.
-- Touch `.claude/settings.local.json` (different concern: permissions allowlist).
-- Use `"off"` blanket for skills — `"user-invocable-only"` preserves user-level escape hatches and is a smaller behavior change.
-- Run `claude mcp remove -s user <name>` as a fallback without explicit user confirmation — that's global removal and affects every project.
-- Skip Phase 5 verification and claim success.
-- Uninstall or disable `superpowers:using-superpowers`, `update-config`, `project-scope`, or anything mandated by global CLAUDE.md.
-- Skip Phase 0. Working from a stale marketplace cache produces wrong proposals — recommending de-listed plugins (whose Phase 4 install will fail), or missing newly-published ones the user actually wants.
-- Silently propose disabling a globally-mandated resource (mempalace, ollama, caveman). Either omit from the proposal or flag the conflict.
-- Bundle claude.ai integrations under one yes/no when Qci slot is available. claude.ai servers (Ahrefs / Asana / Gmail / Calendar / Drive / HubSpot / Context7) deserve individual tickboxes because users keep heterogeneous subsets — denying Ahrefs while keeping Gmail is a common pattern. Only fall back to bundling when the 5-question overflow rule forces it.
+- **Hand-editing `enabledPlugins`** in `.claude/settings.json` — the install/uninstall `--scope project` verbs own that key; hand-editing fights the CLI's bookkeeping.
+- **Editing global `~/.claude/settings.json`, or `.claude/settings.local.json`** — project scope only; the latter is the permissions allowlist, a separate concern.
+- **`claude mcp remove -s user <name>` as a fallback without explicit confirmation** — that is a global removal affecting every project.
+- **Installing a Pass C marketplace plugin without explicit per-plugin consent** — installing downloads and executes remote code.
+- **Piping the full `claude plugins list --available --json` pool** — it exceeds the ~64 KB output cap, arrives truncated, and corrupts jq; read `plugin-catalog-cache.json` and filter server-side.
+- **Claiming success without running Phase 5 verification.**
+- **Uninstalling or disabling `superpowers:using-superpowers`, `update-config`, `project-scope`, or anything mandated by global CLAUDE.md.**
