@@ -204,8 +204,11 @@ Tune to taste:
 - Extra shell patterns: `/shell-guard` → add to `SHELL_GUARD_EXTRA_PATTERNS`.
 - Pause without uninstalling: `GIT_GUARD_DISABLE=1` / `SHELL_GUARD_DISABLE=1`.
 
-To **override** a block for one command, run it yourself in a terminal — the guards only
-ever gate Claude's Bash tool, never your own shell.
+To **override** a block for one command, run it yourself — the guards only ever gate
+Claude's Bash tool, never your own shell. Every block hands the command back as a
+ready-to-paste `!`-prefixed line; typed into the Claude Code prompt, `!` runs it in your
+shell, bypassing the hook. shell-guard fronts that line with an irreversibility warning,
+since the commands it blocks are catastrophic by design.
 
 ---
 

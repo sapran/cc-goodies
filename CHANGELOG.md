@@ -9,6 +9,15 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ### Changed
 
+- **`git-guard` / `shell-guard` blocks now hand the command back as a copy-paste
+  `!`-line.** Every block prints the original command prefixed with `!` on its own
+  unindented line — typed into the Claude Code prompt, the `!` prefix runs it in the
+  user's own shell, which the hook never gates, so overriding a one-off block is a
+  single copy-paste (`! git push origin main`). shell-guard fronts the line with an
+  explicit "destructive and IRREVERSIBLE — verify the target" warning, since the
+  commands it blocks are catastrophic by design. No change to what either guard blocks
+  or to its exit codes; the deny *message* is the only thing that changed. READMEs and
+  `docs/shell-safety.md` updated to show the new output.
 - **`git-guard` / `shell-guard` pause/resume is now a first-class choice.** `/git-guard`
   and `/shell-guard` lead with the guard's current `ON`/`PAUSED` state and present **pause**
   and **resume** as explicit menu options (writing or clearing `GIT_GUARD_DISABLE` /

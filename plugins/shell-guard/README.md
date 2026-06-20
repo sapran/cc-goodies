@@ -16,12 +16,20 @@ and reports back instead of running it). For `rm -rf ~`:
 
 ```text
 ⛔ shell-guard: blocked a dangerous command — recursive delete of a protected path.
-   If you really mean it, run it yourself in a terminal, set
-   SHELL_GUARD_DISABLE=1, or see /shell-guard.
+   ⚠️  This is destructive and IRREVERSIBLE. Verify the target before running.
+   To run it anyway, paste into the prompt (! runs it in your shell):
+! rm -rf ~
+   Or set SHELL_GUARD_DISABLE=1 / see /shell-guard.
 ```
 
 The text after the dash names the matched rule (e.g. `network download piped into a
 shell`, `dd onto a raw disk device`, `sudo — privilege escalation`).
+
+The blocked command is handed back as a ready-to-paste `!`-prefixed line — typed into
+the Claude Code prompt, `!` runs it in **your** shell, which this hook never gates.
+Because shell-guard only ever blocks **catastrophic** commands, that line is fronted
+with an explicit irreversibility warning: it is an override for when you are certain,
+not a frictionless one-paste re-run.
 
 shell-guard is designed to **cover a typical `permissions.deny` shell list** in
 `~/.claude/settings.json`. That list matches command *strings* exactly, so it misses

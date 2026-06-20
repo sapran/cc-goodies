@@ -18,8 +18,14 @@ on stderr (so it stops and tells you, instead of `main` moving). For
 ```text
 ⛔ git-guard: blocked push to protected branch 'main'.
    Protected: main master. Use a feature branch or 'develop'.
-   Override: run it yourself in a terminal, set GIT_GUARD_DISABLE=1, or see /git-guard.
+   To run it yourself, paste into the prompt (! runs it in your shell):
+! git push origin main
+   Or set GIT_GUARD_DISABLE=1 / see /git-guard.
 ```
+
+The blocked command is always handed back as a ready-to-paste `!`-prefixed line.
+Typed into the Claude Code prompt, the `!` prefix runs it in **your** shell — which
+this hook never gates — so overriding a one-off block is a single copy-paste.
 
 ## Behavior
 

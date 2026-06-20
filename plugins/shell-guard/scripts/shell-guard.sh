@@ -84,10 +84,16 @@ TRUNC_RE='^[[:space:]]*:[[:space:]]*>([^>]|$)'
 
 # --- Helpers ----------------------------------------------------------------
 deny() {
-  # $1 = human reason
+  # $1 = human reason. Hand the blocked command back as a copy-paste `!`-prefixed
+  # line: typed into the Claude Code prompt, the `!` prefix runs it in the user's
+  # own shell, which this hook never sees. $cmd is the original tool command.
+  # These are CATASTROPHIC commands by design, so we front the line with an
+  # explicit irreversibility warning — never a frictionless one-paste nuke.
   printf '%s\n' "⛔ shell-guard: blocked a dangerous command — $1." >&2
-  printf '%s\n' "   If you really mean it, run it yourself in a terminal, set" >&2
-  printf '%s\n' "   SHELL_GUARD_DISABLE=1, or see /shell-guard." >&2
+  printf '%s\n' "   ⚠️  This is destructive and IRREVERSIBLE. Verify the target before running." >&2
+  printf '%s\n' "   To run it anyway, paste into the prompt (! runs it in your shell):" >&2
+  printf '%s\n' "! $cmd" >&2
+  printf '%s\n' "   Or set SHELL_GUARD_DISABLE=1 / see /shell-guard." >&2
   return 2
 }
 
