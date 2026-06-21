@@ -11,6 +11,7 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 | **[rtk-hook](plugins/rtk-hook)** | Wires RTK (Rust Token Killer) as a managed `PreToolUse` hook to cut output tokens on routine Bash commands. Pause/resume via `/rtk-hook`; no-ops without the `rtk` binary. Cross-platform. |
 | **[session-finalise](plugins/session-finalise)** | An end-of-session checklist that preserves work, then cleans up: commit/stash, durable memory, handoff, tracker updates, scratch-file and worktree removal — confirming every irreversible step. Auto-activates on wrap-up, or run `/session-finalise`. Cross-platform. |
 | **[project-scope](plugins/project-scope)** | Scopes a project's plugins, MCP servers and skills to a stated theme — uninstalls off-theme plugins at project scope, disables user-level skills/MCPs, installs relevant ones, sets the context budget. Every change is consent-gated; project scope only. Auto-activates, or run `/project-scope <theme>`. Cross-platform. |
+| **[gpt-search](plugins/gpt-search)** | Deep web research via the **Codex MCP**, with a project-local cache so the same search isn't paid for twice — checks the cache first, researches on a miss, then formats and stores the result. Brings your own Codex MCP (no bundled `.mcp.json`); degrades gracefully when it's absent. Auto-activates, or run `/gpt-search <query>`. Cross-platform. |
 
 > **Shell safety.** `git-guard` and `shell-guard`, together with your `settings.json`
 > deny list and plan mode, form a layered defense against dangerous shell commands. The
@@ -31,10 +32,11 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 /plugin install rtk-hook@cc-goodies
 /plugin install session-finalise@cc-goodies
 /plugin install project-scope@cc-goodies
+/plugin install gpt-search@cc-goodies
 /statusline-install
 ```
 
-Install any subset — they don't depend on each other. The hook plugins (`voice-notify`, `git-guard`, `shell-guard`, `rtk-hook`) need no wiring: their hooks are declared inline in `plugin.json`, so `/plugin install` is the whole install and the hook stays active across updates. Pause them any time without uninstalling via `/git-guard` / `/shell-guard` / `/rtk-hook` (or `CLAUDE_VOICE_NOTIFY=off` for voice-notify). `/statusline-install` is a one-time wiring step, needed only if you installed the statusline. RTK is a separate prerequisite (`brew install rtk`); if you previously hand-wired `rtk hook claude` into `settings.json`, `/rtk-hook` offers to remove that now-duplicate entry.
+Install any subset — they don't depend on each other. The hook plugins (`voice-notify`, `git-guard`, `shell-guard`, `rtk-hook`) need no wiring: their hooks are declared inline in `plugin.json`, so `/plugin install` is the whole install and the hook stays active across updates. Pause them any time without uninstalling via `/git-guard` / `/shell-guard` / `/rtk-hook` (or `CLAUDE_VOICE_NOTIFY=off` for voice-notify). `/statusline-install` is a one-time wiring step, needed only if you installed the statusline. RTK is a separate prerequisite (`brew install rtk`); if you previously hand-wired `rtk hook claude` into `settings.json`, `/rtk-hook` offers to remove that now-duplicate entry. `gpt-search` needs a **Codex MCP** at runtime (it ships no `.mcp.json` — bring your own); it degrades gracefully with a hint if the MCP is absent.
 
 ## Uninstall
 
@@ -51,11 +53,12 @@ Reverse of install — undo any wiring or config first, then remove the plugins 
 /plugin uninstall rtk-hook@cc-goodies
 /plugin uninstall session-finalise@cc-goodies
 /plugin uninstall project-scope@cc-goodies
+/plugin uninstall gpt-search@cc-goodies
 /plugin uninstall voice-notify@cc-goodies
 /plugin marketplace remove cc-goodies
 ```
 
-Each plugin's dedicated uninstall only undoes what its install added and refuses to touch anything you configured yourself. voice-notify, session-finalise and project-scope write nothing outside their plugin directories, so `/plugin uninstall` removes them completely. Run `/hooks` or restart afterwards.
+Each plugin's dedicated uninstall only undoes what its install added and refuses to touch anything you configured yourself. voice-notify, session-finalise, project-scope and gpt-search write nothing outside their plugin directories, so `/plugin uninstall` removes them completely. (gpt-search's only side effect is the on-use, project-local `.claude/cache/search/` cache — clear it with `rm -rf .claude/cache/search/` if you want.) Run `/hooks` or restart afterwards.
 
 ## Install / uninstall everything (shell)
 
@@ -72,6 +75,7 @@ claude plugins install shell-guard@cc-goodies
 claude plugins install rtk-hook@cc-goodies
 claude plugins install session-finalise@cc-goodies
 claude plugins install project-scope@cc-goodies
+claude plugins install gpt-search@cc-goodies
 ```
 
 Then, inside Claude, wire the statusline (the CLI can't set the `statusLine` key): `/statusline-install`. RTK is a separate prerequisite (`brew install rtk`); if you hand-wired `rtk hook claude` before, `/rtk-hook` offers to remove the duplicate.
@@ -91,6 +95,7 @@ claude plugins uninstall shell-guard@cc-goodies
 claude plugins uninstall rtk-hook@cc-goodies
 claude plugins uninstall session-finalise@cc-goodies
 claude plugins uninstall project-scope@cc-goodies
+claude plugins uninstall gpt-search@cc-goodies
 claude plugins uninstall voice-notify@cc-goodies
 claude plugins marketplace remove cc-goodies
 rm -f ~/.claude/git-guard.conf ~/.claude/shell-guard.conf ~/.claude/rtk-hook.conf

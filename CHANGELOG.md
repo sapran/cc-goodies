@@ -9,6 +9,18 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ### Added
 
+- **`gpt-search` plugin** — deep web research from a Claude Code session, backed by the
+  **Codex MCP**, with a project-local cache so the same search isn't paid for twice. It checks
+  `.claude/cache/search/*.md` by keyword overlap first (offering reuse / re-search / new-query
+  on a relevant hit), calls the Codex MCP read-only on a miss, then formats the result
+  (summary, key facts, sourced links) and stores it under
+  `.claude/cache/search/YYYY-MM-DD_<topic>.md` with YAML frontmatter. Ships as an
+  **auto-activating skill** plus a thin **`/gpt-search`** command alias. Depends on the Codex
+  MCP (`mcp__codex__codex` / `mcp__codex__codex-reply`) as a documented **prerequisite** — it
+  bundles **no `.mcp.json`** (bring your own) and degrades gracefully with a hint when the MCP
+  is absent, rather than hard-failing. No hook and nothing written outside its own directory at
+  install time, so `/plugin uninstall` is the complete revert; the on-use cache is
+  user-clearable (`rm -rf .claude/cache/search/`). Migrated from a local user-level skill.
 - **`rtk-hook` gains a `/rtk-hook` control panel and a pause switch.** The hook script now
   reads `~/.claude/rtk-hook.conf` and honours `RTK_HOOK_DISABLE=1` (env > conf > default), so
   RTK rewriting can be paused without uninstalling — commands then run unrewritten. The new

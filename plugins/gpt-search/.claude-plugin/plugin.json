@@ -1,0 +1,11 @@
+{
+  "name": "gpt-search",
+  "version": "0.1.0",
+  "description": "Deep web research from a Claude Code session via the Codex MCP, with project-local cache reuse. Auto-activating skill plus a /gpt-search command. Brings your own Codex MCP; no bundled .mcp.json.",
+  "author": {
+    "name": "Volodymyr Styran",
+    "url": "https://github.com/sapran"
+  },
+  "license": "MIT",
+  "keywords": ["gpt", "search", "research", "codex", "mcp", "cache"]
+}
