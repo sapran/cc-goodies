@@ -1,6 +1,6 @@
 ---
 name: session-finalise
-version: 0.2.0
+version: 0.2.1
 description: >-
   This skill should be used when wrapping up, closing out, or ending a work session —
   "finalise the session", "wrap up", "we're done for today", "let's close out", "save state

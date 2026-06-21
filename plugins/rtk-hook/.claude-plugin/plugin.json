@@ -1,6 +1,6 @@
 {
   "name": "rtk-hook",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Wire the RTK (Rust Token Killer) token-optimizer as a managed PreToolUse hook on the Bash tool, with a /rtk-hook control panel to pause/resume it. No-ops gracefully when rtk isn't installed.",
   "author": {
     "name": "Volodymyr Styran",

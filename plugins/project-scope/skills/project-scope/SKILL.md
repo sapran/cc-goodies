@@ -1,6 +1,6 @@
 ---
 name: project-scope
-version: 0.2.0
+version: 0.2.1
 description: >-
   This skill should be used when the user wants to scope or trim THIS project's plugins, MCP
   servers, and skills to only those relevant for a stated theme — "scope this project to

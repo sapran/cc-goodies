@@ -1,6 +1,6 @@
 {
   "name": "session-finalise",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "End-of-session housekeeping: an auto-activating checklist (durable memory, handoff, tracker updates, commit/stash, cleanup) plus a /session-finalise command, confirming every irreversible step.",
   "author": {
     "name": "Volodymyr Styran",
