@@ -1,5 +1,5 @@
 ---
-description: Install the cc-goodies enriched statusline — copies the script and wires it into settings.json (with confirmation).
+description: Wire the cc-goodies statusline into settings.json
 allowed-tools: Bash(mkdir:*), Bash(cp:*), Bash(chmod:*), Bash(jq:*), Bash(test:*), Bash(command -v jq), Read, Edit
 disable-model-invocation: true
 ---
