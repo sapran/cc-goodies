@@ -47,6 +47,23 @@ humanize_secs() {
   else printf '%dm' "$m"; fi
 }
 
+# Pick a gauge's colour from its own value by ascending severity tiers. Each arg after the
+# value is a "min:sgr" token; the highest tier whose min the value reaches wins, defaulting to
+# green below the first — so one helper drives the 4-tier context gauge and the 3-tier
+# rate-limit gauges. 256-colour indices (not ANSI-16) keep amber/red legible on a light
+# background where the theme's yellow washes out. A non-numeric/empty value falls through to
+# green (fail-soft, never errors). The colour's own ';' never collides with the ':' delimiter.
+gauge_sgr() {
+  local v=$1; shift
+  local out='38;5;34'   # green: below the first threshold
+  case "$v" in (''|*[!0-9]*) printf '%s' "$out"; return ;; esac
+  local tier
+  for tier in "$@"; do
+    [ "$v" -ge "${tier%%:*}" ] && out="${tier#*:}"
+  done
+  printf '%s' "$out"
+}
+
 if [ -z "$effort" ] && [ -f "$HOME/.claude/settings.json" ]; then
   effort=$(jq -r '.effortLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null)
 fi
@@ -183,15 +200,16 @@ printf "\n"
 printf "\033[36m%s\033[0m" "$model"
 [ -n "$effort" ] && printf " \033[2;36m(%s)\033[0m" "$effort"
 if [ -n "$used" ]; then
-  printf "  \033[35mc:%s%%\033[0m" "$(printf '%.0f' "$used")"
-  [ -n "$c_dur" ] && printf " \033[2;35m⧗%s\033[0m" "$c_dur"
+  used_int=$(printf '%.0f' "$used" 2>/dev/null)
+  printf "  \033[%smc:%s%%\033[0m" "$(gauge_sgr "$used_int" 25:'38;5;178' 50:'38;5;208' 75:'1;38;5;196')" "$used_int"
+  [ -n "$c_dur" ] && printf " \033[2;37m⧗%s\033[0m" "$c_dur"
 fi
 if [ -n "$rl_5h" ] && [ "${rl_5h_int:-0}" -gt 0 ] 2>/dev/null; then
-  printf " \033[35ms:%s%%\033[0m" "$rl_5h_int"
-  [ -n "$s_reset" ] && printf " \033[2;35m⟲%s\033[0m" "$s_reset"
+  printf " \033[%sms:%s%%\033[0m" "$(gauge_sgr "$rl_5h_int" 50:'38;5;208' 80:'1;38;5;196')" "$rl_5h_int"
+  [ -n "$s_reset" ] && printf " \033[2;37m⟲%s\033[0m" "$s_reset"
 fi
 if [ -n "$rl_7d" ] && [ "${rl_7d_int:-0}" -gt 0 ] 2>/dev/null; then
-  printf " \033[35mw:%s%%\033[0m" "$rl_7d_int"
-  [ -n "$w_reset" ] && printf " \033[2;35m⟲%s\033[0m" "$w_reset"
+  printf " \033[%smw:%s%%\033[0m" "$(gauge_sgr "$rl_7d_int" 50:'38;5;208' 75:'1;38;5;196')" "$rl_7d_int"
+  [ -n "$w_reset" ] && printf " \033[2;37m⟲%s\033[0m" "$w_reset"
 fi
 printf "\n"
