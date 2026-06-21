@@ -1,6 +1,7 @@
 ---
-description: Remove the cc-goodies statusline — deletes the installed script and removes the statusLine entry it added (with confirmation). Won't touch a statusline you set up yourself.
+description: Remove the cc-goodies statusline from settings.json
 allowed-tools: Bash(jq:*), Bash(rm:*), Bash(cp:*), Bash(test:*), Bash(command -v jq), Read, Edit
+disable-model-invocation: true
 ---
 
 You are reverting what `/statusline-install` did for the current user. Be careful and idempotent, and **never remove a statusline the user configured themselves**.
