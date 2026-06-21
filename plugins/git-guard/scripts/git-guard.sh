@@ -104,7 +104,7 @@ deny() {
   # unmodified tool command, so the line below re-runs exactly what was attempted.
   printf '%s\n' "⛔ git-guard: blocked $1." >&2
   printf '%s\n' "   Protected: $MAIN_BRANCHES. Use a feature branch or 'develop'." >&2
-  printf '%s\n' "   To run it yourself, paste into the prompt (! runs it in your shell):" >&2
+  printf '%s\n' "   To run it anyway, paste into the prompt (! runs it in your shell):" >&2
   printf '%s\n' "! $cmd" >&2
   printf '%s\n' "   Or set GIT_GUARD_DISABLE=1 / see /git-guard." >&2
   return 2

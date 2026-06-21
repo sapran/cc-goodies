@@ -18,7 +18,7 @@ on stderr (so it stops and tells you, instead of `main` moving). For
 ```text
 ⛔ git-guard: blocked push to protected branch 'main'.
    Protected: main master. Use a feature branch or 'develop'.
-   To run it yourself, paste into the prompt (! runs it in your shell):
+   To run it anyway, paste into the prompt (! runs it in your shell):
 ! git push origin main
    Or set GIT_GUARD_DISABLE=1 / see /git-guard.
 ```
