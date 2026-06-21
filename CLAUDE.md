@@ -15,7 +15,7 @@ Claude Code plugins. Each lives under `plugins/<name>/` and is installable on it
 | Plugin | Kind | Notes |
 |--------|------|-------|
 | `statusline` | statusline + install command | macOS-oriented; needs `/statusline-install` to wire `statusLine` into settings (a plugin can't set that key itself) |
-| `voice-notify` | hooks | macOS `say`; Notification + Stop hooks |
+| `voice-notify` | hooks | macOS `say`; Notification + Stop + UserPromptSubmit hooks (the last stamps a `$TMPDIR` turn-start timestamp so Stop can stay quiet on quick turns) |
 | `git-guard` | hook + commands | cross-platform; PreToolUse/Bash guard against writes to protected branches |
 | `shell-guard` | hook + commands | cross-platform; PreToolUse/Bash guard that hard-blocks a small catastrophic-command set (`rm -rf ~`, `dd`/redirect to device, `mkfs`, fork bombs, `curl\|sh`, `: >`, `chmod 777`, `eval`, `sudo`, reboot/shutdown). Covers a typical `settings.json` shell deny list; catches plain-form accidents — deliberate evasion is out of scope (plan-mode backstop) |
 | `rtk-hook` | hook + commands | cross-platform; wraps `rtk hook claude` as a PreToolUse/Bash hook (no-ops if `rtk` absent). `/rtk-hook` is the control panel — pause/resume (`RTK_HOOK_DISABLE` in `~/.claude/rtk-hook.conf`) or remove a hand-wired `settings.json` duplicate; `/rtk-hook-uninstall` deletes the conf and offers to restore the hand-wired entry |

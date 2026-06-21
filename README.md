@@ -4,7 +4,7 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 
 | Plugin | What it does |
 |--------|--------------|
-| **[voice-notify](plugins/voice-notify)** | Speaks a short, rotating, first-person cue (macOS `say`) when Claude needs your attention or finishes a turn. |
+| **[voice-notify](plugins/voice-notify)** | Speaks a short, natural, first-person cue (macOS `say`) when Claude needs your attention or finishes a long turn — varied phrasing routed by context, quiet on quick turns. |
 | **[statusline](plugins/statusline)** | An enriched two-line statusline: `user@host`, cwd, branch/worktree, task focus, model, effort, context % and rate-limit %. |
 | **[git-guard](plugins/git-guard)** | Blocks accidental commits/merges/pushes to protected branches (`main`/`master`) before they run. One default behaviour plus an optional block-all-push mode; configurable branches. Cross-platform. |
 | **[shell-guard](plugins/shell-guard)** | Blocks a curated set of catastrophic shell commands (`rm -rf /` or `~`, `dd` to a disk, `mkfs`, fork bombs, `curl\|sh`) before they run. Defence in depth over the deny list; configurable. Cross-platform. |
