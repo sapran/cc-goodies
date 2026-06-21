@@ -7,6 +7,20 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-06-21
+
+### Fixed
+
+- **`statusline` muted text was washed out on light terminal backgrounds.** The prompt/task
+  summary, the `⧗`/`⟲` time suffixes, and the effort tag used the ANSI *dim* attribute
+  (`2;37` dim-white, `2;36` dim-cyan). On a light background the dim attribute lowers a
+  colour's intensity *toward* the light background, so these elements rendered as
+  near-invisible pale grey. They now use deterministic 256-colour indices instead — muted
+  text → `38;5;243` (a flat medium grey), the effort tag → `38;5;37` (solid teal, still tied
+  to the cyan model name) — matching the existing rationale for the line-2 gauges, which
+  already use 256-colour indices to stay legible on a light background. No layout, parsing, or
+  dependency change; only the SGR codes for already-present elements.
+
 ## [0.5.0] - 2026-06-21
 
 ### Changed
