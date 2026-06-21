@@ -1,14 +1,15 @@
 ---
 name: project-scope
+version: 0.2.0
 description: >-
-  Use when the user wants to scope or trim THIS project's plugins, MCP servers, and skills to
-  only those relevant for a stated theme — "scope this project to security work", "trim my
-  plugins for this theme", "reduce per-turn token cost here", "which tools should this project
-  have?". Investigates currently-active resources, installed-but-disabled plugins, AND plugins
-  available in registered marketplaces; proposes per-bucket changes with explicit consent;
-  applies plugin changes via `claude plugins install|uninstall --scope project` and writes
-  `.claude/settings.json` (including `skillListingBudgetFraction`). Project scope only — never
-  touches global config.
+  This skill should be used when the user wants to scope or trim THIS project's plugins, MCP
+  servers, and skills to only those relevant for a stated theme — "scope this project to
+  security work", "trim my plugins for this theme", "reduce per-turn token cost here", "which
+  tools should this project have?". It investigates currently-active resources,
+  installed-but-disabled plugins, AND plugins available in registered marketplaces; proposes
+  per-bucket changes with explicit consent; applies plugin changes via `claude plugins
+  install|uninstall --scope project` and writes `.claude/settings.json` (including
+  `skillListingBudgetFraction`). Project scope only — never touches global config.
 ---
 
 # Project Scope
