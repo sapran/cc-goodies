@@ -7,6 +7,23 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-21
+
+### Changed
+
+- **`statusline` line-2 usage gauges are now coloured by fill level.** The `c:`, `s:`, and
+  `w:` gauges were a single flat colour regardless of value; each is now coloured from its own
+  percentage by ascending severity tiers. The context gauge (`c:`) uses a four-tier ramp —
+  green below 25%, yellow at 25, amber at 50, red at 75 — while the 5-hour (`s:`) and 7-day
+  (`w:`) rate-limit gauges use three tiers (amber at 50, red at 80 and 75 respectively). A new
+  pure-bash `gauge_sgr` helper maps a value to a 256-colour SGR code from a list of ascending
+  `min:sgr` tier tokens; the fixed indices (green 34, gold 178, amber 208, red 196) keep
+  amber/red legible on a light background where ANSI-16 yellow washes out, and the critical red
+  tier is bolded for a second, colour-independent signal. The `⧗`/`⟲` time suffixes move to a
+  neutral dim grey so the now-coloured percentage stays the primary figure. Colour selection is
+  integer comparison — no new dependency, no extra `jq` call — so the single-parse-per-render
+  budget and the two-line layout are unchanged.
+
 ## [0.4.0] - 2026-06-21
 
 ### Added
