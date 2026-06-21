@@ -34,6 +34,6 @@
 
 ## 6. Post-merge follow-up (out of scope for repo edits — track separately)
 
-- [ ] 6.1 Fast-forward `develop`→`main`, push `main` with raw git (rtk proxy bypasses git-guard) — with explicit user confirmation
-- [ ] 6.2 User runs `/plugin marketplace update` + `/plugin install gpt-search@cc-goodies`
-- [ ] 6.3 After the plugin is installed, remove the local `~/.claude/skills/gpt-search/` duplicate to avoid a name collision
+- [x] 6.1 Fast-forward `develop`→`main`, push `main` with raw git (rtk proxy bypasses git-guard) — with explicit user confirmation
+- [x] 6.2 User runs `/plugin marketplace update` + `/plugin install gpt-search@cc-goodies`
+- [x] 6.3 After the plugin is installed, remove the local `~/.claude/skills/gpt-search/` duplicate to avoid a name collision
