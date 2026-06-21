@@ -1,6 +1,6 @@
 {
   "name": "git-guard",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Block accidental commits, merges and pushes to protected branches (main/master) before they run. Configurable protected branches; optional block-all-push mode.",
   "author": {
     "name": "Volodymyr Styran",
