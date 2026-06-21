@@ -1,14 +1,15 @@
 ---
 name: project-scope
+version: 0.2.0
 description: >-
-  Use when the user wants to scope or trim THIS project's plugins, MCP servers, and skills to
-  only those relevant for a stated theme — "scope this project to security work", "trim my
-  plugins for this theme", "reduce per-turn token cost here", "which tools should this project
-  have?". Investigates currently-active resources, installed-but-disabled plugins, AND plugins
-  available in registered marketplaces; proposes per-bucket changes with explicit consent;
-  applies plugin changes via `claude plugins install|uninstall --scope project` and writes
-  `.claude/settings.json` (including `skillListingBudgetFraction`). Project scope only — never
-  touches global config.
+  This skill should be used when the user wants to scope or trim THIS project's plugins, MCP
+  servers, and skills to only those relevant for a stated theme — "scope this project to
+  security work", "trim my plugins for this theme", "reduce per-turn token cost here", "which
+  tools should this project have?". It investigates currently-active resources,
+  installed-but-disabled plugins, AND plugins available in registered marketplaces; proposes
+  per-bucket changes with explicit consent; applies plugin changes via `claude plugins
+  install|uninstall --scope project` and writes `.claude/settings.json` (including
+  `skillListingBudgetFraction`). Project scope only — never touches global config.
 ---
 
 # Project Scope
@@ -19,50 +20,12 @@ Investigate the available Claude Code resources at three friction tiers — curr
 
 ## Mechanism reference (canonical)
 
-Two paradigms, chosen by whether a **project-install primitive exists** for the surface.
+Two paradigms, chosen by whether a **project-install primitive exists** for the surface:
 
-### Paradigm 1 — project-scoped install / uninstall (plugins)
+- **Paradigm 1 — project-scoped install / uninstall (plugins).** Plugins are the only surface with a real per-project install primitive; add/remove via `claude plugins install|uninstall <id> --scope project`. Let the CLI own `enabledPlugins` — never hand-edit it.
+- **Paradigm 2 — enable / disable (`.claude/settings.json`).** For surfaces with no project-install primitive (user-level standalone skills via `skillOverrides`; user-scope / Claude Desktop / claude.ai MCP servers via `deniedMcpServers`; skill-listing context via `skillListingBudgetFraction`). Toggled off *for the project*, never "uninstalled".
 
-Plugins are the only surface with a real per-project install primitive. Adding or removing a plugin *for this project* is an **install/uninstall** operation, not a settings toggle:
-
-| Operation | Command | Effect |
-|---|---|---|
-| Add a plugin to this project | `claude plugins install <id> --scope project` | Installs (downloads if needed) and scopes the plugin to THIS project. The CLI records project-scope state in `.claude/settings.json` `enabledPlugins`. |
-| Remove a plugin from this project | `claude plugins uninstall <id> --scope project` | Uninstalls the plugin from THIS project's scope only — user/global scope is untouched. |
-
-Let the CLI own `enabledPlugins`. Do **not** hand-edit that key — run the install/uninstall commands and preserve whatever they write.
-
-### Paradigm 2 — enable / disable (denylist & override in `.claude/settings.json`)
-
-For surfaces with **no** project-install primitive — user-level standalone skills, and user-scope / Claude Desktop / claude.ai MCP servers. These are toggled off *for the project*, never "uninstalled":
-
-| Surface | Key in `.claude/settings.json` | Effect |
-|---|---|---|
-| Skills (user-level standalone, e.g. `~/.claude/skills/*`) | `skillOverrides: { "skill-name": "user-invocable-only" }` | Hides from model's listing (saves per-turn tokens); `/skill-name` still works manually. Use `"off"` to also hide the slash command. |
-| MCP servers (user-scope, `.mcp.json`, **Claude Desktop config**, or **claude.ai integrations**) | `deniedMcpServers: [{ "serverName": "..." }]` | Denylist takes precedence across all scopes. Matches by raw `serverName` (no `mcp__` prefix, no `claude_ai_` prefix). One key denies the server whether it reached CC via user-scope add, `.mcp.json`, Desktop config import, a Desktop-launched CC session, or a claude.ai remote integration — and wins even when `enableAllProjectMcpServers` is true. |
-| Plugin-provided skills / MCPs | (governed by the plugin) | Follow their parent plugin's project install/uninstall — install the plugin to get them, uninstall to remove them. No separate key. |
-| Skill-listing context budget | `skillListingBudgetFraction: 0.01` (1%) … `0.05` (5%) | Fraction of context window reserved for the skill listing. Lower = aggressive truncation = leaner per-turn cost. Higher = full descriptions visible = better skill matching. Default 0.01. |
-
-### npm-based skills / tools
-
-If a project uses any npm-based skills or tools, apply the **same project-scoped install/uninstall principle**: manage them with project-local `npm install <pkg>` / `npm uninstall <pkg>` (which writes the project's `package.json`/lockfile), never a global enable/disable toggle. This skill does not currently run an npm discovery pass; if such tools are in play, treat them under install/uninstall consistent with Paradigm 1.
-
-### Reading the plugin universe (canonical data source)
-
-**Read the on-disk catalog cache — do NOT pipe the CLI's `--json` stream.** `claude plugins list --available --json` serialises the entire marketplace pool (~330 KB / 1400+ lines). That far exceeds the agent's Bash output cap (~64 KB), so the stream arrives **truncated** and corrupts any downstream `jq` (`parse error: Unfinished string at EOF`). Query the cache file the CLI already maintains instead:
-
-- **Path:** `~/.claude/plugins/plugin-catalog-cache.json` — refreshed by Phase 0's `marketplace update` (carries top-level `fetchedAt`).
-- **Shape:** `.catalog.plugins["<id>@<marketplace>"]` →
-  - `.marketplace_entry.{name, description, category}`
-  - `.unique_installs` — popularity/health proxy. **Sort on this.** (This is the real field; there is no `installCount`.)
-  - `.version`, `.source`
-  - `.tokens["<model>"].{always_on, on_invoke}` — context cost in tokens. `always_on` loads into **every** turn (budget-relevant); `on_invoke` only when the component is invoked. Model keys seen: `claude-opus-4-7`, `claude-sonnet-4-6` — these can lag the session's model, so read the current model's key if present, else any opus key, else any key.
-  - `.components.{skills,agents,commands,hooks,mcpServers,lspServers}[].chars.{always_on, on_invoke}` — per-component breakdown (note: `mcpServers` here means the plugin bundles its own MCP, which adds tool-listing budget on install).
-- **Iron rule:** never emit the full pool through the tool. Always keyword-match + sort + slice **inside one `jq`** and print only the small survivor set. Reading the file server-side is fine; printing all of it is what truncates.
-
-The authoritative installed/downloaded record is `~/.claude/plugins/installed_plugins.json` (`.plugins` object). For entries de-listed from the cache, the fallback is the on-disk manifest under `~/.claude/plugins/marketplaces/<marketplace>/.../plugin.json`.
-
-Do **not** touch `~/.claude/settings.json` (global) — other projects must keep their full surface area.
+The canonical command/key tables, the npm-based-tools note, and the catalog-cache data source (`~/.claude/plugins/plugin-catalog-cache.json` shape, the `--json`-truncation iron rule, and `installed_plugins.json` fallback) live in **[references/mechanism.md](references/mechanism.md)** — read it before any inventory or apply step. Do **not** touch `~/.claude/settings.json` (global).
 
 ## Workflow
 
@@ -81,7 +44,7 @@ This is a single network call per registered marketplace (~5–30s total). It pr
 
 If `marketplace update` reports failure for a *specific* marketplace (network, auth, repo gone), continue with the others and surface the failure in Phase 3A so the user sees which slice of the universe is stale. Do **not** abort — partial freshness is better than no freshness.
 
-After update, proceed to Phase 1. The refreshed listings are written to `~/.claude/plugins/plugin-catalog-cache.json` (see *Reading the plugin universe* above) — Phase 1 reads that file, never the `--json` stream.
+After update, proceed to Phase 1. The refreshed listings are written to the catalog cache (see references/mechanism.md) — Phase 1 reads that file, never the `--json` stream.
 
 ### Phase 1 — Inventory (three tiers)
 
@@ -220,31 +183,9 @@ This way the user sees **everything** the model is proposing before the AskUserQ
 
 #### 3B. AskUserQuestion call
 
-Construct **one** AskUserQuestion call with up to 4 questions. Skip any question whose bucket is empty.
+Construct **one** AskUserQuestion call with up to 4 questions, skipping any whose bucket is empty: Q1 removals (single-select), Qci claude.ai integrations to keep allowed (multiSelect — only if Pass A has a claude.ai MCP), Q2 installs of already-downloaded plugins, Q3 installs from marketplace (only if Pass C non-empty), and Q4 the skill-listing context budget. **Always include Q4**; for it, "Other" lets the user supply a custom value (convert % → fraction, validate >0 ≤1). On "Customize", take the natural-language follow-up next turn; default to "Skip" if none.
 
-| # | Question | Type | Options (max 4 each) |
-|---|---|---|---|
-| Q1 | "Apply the proposed removals?" *(plugin uninstalls + skill/non-claude.ai-MCP disables — claude.ai handled in Qci below)* | single-select | "Apply all", "Customize (specify in next reply)", "Skip — remove nothing" |
-| Qci | "Which claude.ai integrations to KEEP allowed?" *(only if Pass A contains ≥1 claude.ai MCP)* | **multiSelect** | one option per proposed-for-denial claude.ai server, label "Keep `<serverName>` allowed" (max 4 servers shown as tickboxes) |
-| Q2 | "Apply the proposed INSTALLS (already-downloaded plugins)?" | single-select | "Install all", "Customize", "Skip — install nothing" |
-| Q3 | "Apply the proposed INSTALLS (from marketplace — downloads + executes code)?" (only if Pass C non-empty) | single-select | "Install all (downloads code)", "Customize", "Skip — install nothing" |
-| Q4 | "Skill listing context budget for this project?" | single-select | "1% — leanest (default)", "2% — balanced", "3% — generous", "5% — maximum" |
-
-**Always include Q4** even if all other buckets are empty.
-
-For Q4, "Other" is auto-provided by AskUserQuestion — the user can supply a custom value like 4% via free text. Convert to fraction (1% → 0.01, 5% → 0.05). Validate against the schema range (>0, ≤1).
-
-If a user picks "Customize" for any bucket, accept their natural-language follow-up in the next turn (e.g. "skip optimize-image and fade-audio from disable list, keep the rest"). Apply selectively. If they don't follow up, re-prompt once, then default to "Skip" for that bucket.
-
-##### Qci semantics (claude.ai multiSelect)
-
-Give claude.ai servers individual tickboxes (not one bundled yes/no) whenever the Qci slot is available — users keep heterogeneous subsets (deny Ahrefs, keep Gmail). Only bundle when the 5-question overflow rule below forces it.
-
-- Default-deny semantics: **unticked = denied**, **ticked = kept allowed**. Default checked state should be `false` for every option (model proposes denial; user opts back in).
-- Skip Qci entirely if Pass A contains no `mcp__claude_ai_*` servers.
-- If Pass A proposes ≤4 claude.ai servers for denial, list them all as options.
-- If Pass A proposes >4 claude.ai servers for denial: list the **top 4 most theme-ambiguous** (i.e. the ones the user is most likely to want to override) as tickboxes; bundle the rest into Q1's Customize fallback and explicitly note in Phase 3A: *"<N> additional claude.ai servers (<list>) bundled into Q1 (removals) Customize — name them in your reply if you want to keep any."*
-- If Q1, Q2, Q3, Q4, and Qci would all fire (5 questions, over budget): drop Q2 from the menu and surface Pass B candidates in Phase 3A only — apply them with implicit "Apply all" unless the user objects in their next reply. Rationale: installing already-downloaded plugins at project scope is the lowest-friction, lowest-risk class of change (no marketplace fetch, no remote code execution). **Never** drop Qci to make room — that defeats the granularity feature. **Never** drop Q4 — budget fraction must always be confirmed.
+The full question/option tables and the Qci multiSelect semantics (default-deny tickboxes, the >4-server overflow handling, and the 5-question budget rule that drops Q2 but **never** Qci or Q4) live in **[references/phase3-menu.md](references/phase3-menu.md)** — read it before constructing the call.
 
 #### Conflict / global-mandate flagging
 
