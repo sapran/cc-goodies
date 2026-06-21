@@ -1,0 +1,886 @@
+{
+  "pluginDevVersion": "plugin-dev @ claude-plugins-official marketplace (manifest declares no version field); read 2026-06-21",
+  "items": [
+    {
+      "id": "MKT-1",
+      "dimension": "MKT",
+      "rule": "The marketplace catalog MUST exist at .claude-plugin/marketplace.json in the repository root; a missing file fails to load.",
+      "appliesTo": "this repo's .claude-plugin/marketplace.json (always applies)",
+      "sources": [
+        "Anthropic official docs — plugin-marketplaces",
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "MKT-2",
+      "dimension": "MKT",
+      "rule": "marketplace.json MUST be syntactically valid JSON (jq empty passes).",
+      "appliesTo": "this repo's .claude-plugin/marketplace.json (always applies)",
+      "sources": [
+        "Anthropic official docs — plugin-marketplaces",
+        "CLAUDE.md",
+        "plugin-validator"
+      ]
+    },
+    {
+      "id": "MKT-3",
+      "dimension": "MKT",
+      "rule": "marketplace.json MUST have required top-level fields: name (kebab-case string, no spaces), owner (object), and plugins (array). Optional: $schema, description, version, metadata.pluginRoot, allowCrossMarketplaceDependenciesOn.",
+      "appliesTo": "this repo's .claude-plugin/marketplace.json (always applies)",
+      "sources": [
+        "Anthropic official docs — plugin-marketplaces"
+      ]
+    },
+    {
+      "id": "MKT-4",
+      "dimension": "MKT",
+      "rule": "The marketplace owner object MUST have a name (string, required); email is optional.",
+      "appliesTo": "this repo's .claude-plugin/marketplace.json owner field",
+      "sources": [
+        "Anthropic official docs — plugin-marketplaces"
+      ]
+    },
+    {
+      "id": "MKT-5",
+      "dimension": "MKT",
+      "rule": "The marketplace name MUST NOT be a reserved Anthropic name (claude-code-plugins, claude-plugins-official, anthropic-marketplace, agent-skills, etc.) and MUST NOT impersonate an official marketplace.",
+      "appliesTo": "this repo's .claude-plugin/marketplace.json name field",
+      "sources": [
+        "Anthropic official docs — plugin-marketplaces"
+      ]
+    },
+    {
+      "id": "MKT-6",
+      "dimension": "MKT",
+      "rule": "Each plugins[] entry MUST have a unique name (kebab-case, no spaces) and a source (string or object). Duplicate plugin names within the marketplace are an error.",
+      "appliesTo": "every entry in .claude-plugin/marketplace.json plugins[]",
+      "sources": [
+        "Anthropic official docs — plugin-marketplaces",
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "MKT-7",
+      "dimension": "MKT",
+      "rule": "A relative-path source MUST be a string starting with ./, resolve relative to the marketplace root (the dir containing .claude-plugin/, not .claude-plugin/ itself), and MUST NOT contain '..'.",
+      "appliesTo": "marketplace.json plugins[].source entries using the relative-path string form (n-a for object/url sources)",
+      "sources": [
+        "Anthropic official docs — plugin-marketplaces"
+      ]
+    },
+    {
+      "id": "MKT-8",
+      "dimension": "MKT",
+      "rule": "An object source MUST set a valid type discriminator with its required sub-fields: github {repo, ref?, sha?}; url {url, ...}; git-subdir {url, path, ...}; npm {package, ...}. A set sha is the effective pin over ref and MUST be a full 40-char commit SHA.",
+      "appliesTo": "marketplace.json plugins[].source entries using the object form (n-a for relative-path string sources)",
+      "sources": [
+        "Anthropic official docs — plugin-marketplaces"
+      ]
+    },
+    {
+      "id": "MKT-9",
+      "dimension": "MKT",
+      "rule": "With strict:true (default) plugin.json is the authority for components and the marketplace entry may only supplement it; with strict:false the marketplace entry is the whole definition. Declaring components in BOTH plugin.json and a strict:false marketplace entry is a conflicting-manifests load failure.",
+      "appliesTo": "marketplace.json plugins[].strict and the referenced plugin.json (n-a if strict left default and components declared only in plugin.json)",
+      "sources": [
+        "Anthropic official docs — plugin-marketplaces"
+      ]
+    },
+    {
+      "id": "MKT-10",
+      "dimension": "MKT",
+      "rule": "Adding a plugin requires BOTH creating plugins/<name>/ AND adding a matching entry to .claude-plugin/marketplace.json; the directory alone does not register the plugin. When the lineup changes, bump metadata.description in marketplace.json.",
+      "appliesTo": "any change that adds/removes a plugin under plugins/",
+      "sources": [
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "MKT-11",
+      "dimension": "MKT",
+      "rule": "Avoid setting version in BOTH plugin.json and the marketplace entry — the plugin.json value silently wins. Omit version in both to fall back to the git commit SHA (every commit becomes a new version).",
+      "appliesTo": "marketplace.json plugins[].version vs the referenced plugin.json version",
+      "sources": [
+        "Anthropic official docs — plugin-marketplaces"
+      ]
+    },
+    {
+      "id": "MAN-1",
+      "dimension": "MAN",
+      "rule": "When a manifest is present it MUST live at exactly .claude-plugin/plugin.json in the plugin root. (The manifest is technically optional per docs — omitting it auto-derives name from the dir — but every cc-goodies plugin ships one.)",
+      "appliesTo": "every plugin under plugins/<name>/",
+      "sources": [
+        "plugin-structure",
+        "plugin-validator",
+        "Anthropic official docs — plugins-reference"
+      ],
+      "conflictNote": "Primary skill/validator treat plugin.json as mandatory; official docs say it is optional with auto-discovery fallback. Docs govern on the schema fact (manifest optional), but for this marketplace's house convention every plugin ships one, so assess presence."
+    },
+    {
+      "id": "MAN-2",
+      "dimension": "MAN",
+      "rule": "plugin.json MUST be syntactically valid JSON with correct field types; a wrong-typed field (e.g. keywords as a string) is a load error even though unknown top-level fields are only warnings.",
+      "appliesTo": "every plugins/<name>/.claude-plugin/plugin.json",
+      "sources": [
+        "plugin-structure",
+        "plugin-validator",
+        "Anthropic official docs — plugins-reference"
+      ]
+    },
+    {
+      "id": "MAN-3",
+      "dimension": "MAN",
+      "rule": "plugin.json MUST include a non-empty name field (string), the only required field; it is used to namespace components as <plugin-name>:<component-name>.",
+      "appliesTo": "every plugins/<name>/.claude-plugin/plugin.json",
+      "sources": [
+        "plugin-structure",
+        "plugin-validator",
+        "Anthropic official docs — plugins-reference"
+      ]
+    },
+    {
+      "id": "MAN-4",
+      "dimension": "MAN",
+      "rule": "If version is present it MUST be semver MAJOR.MINOR.PATCH; if set it MUST be bumped on every user-facing release or users stay on the cached copy.",
+      "appliesTo": "plugins whose plugin.json declares a version field",
+      "sources": [
+        "plugin-structure",
+        "plugin-validator",
+        "Anthropic official docs — plugins-reference"
+      ]
+    },
+    {
+      "id": "MAN-5",
+      "dimension": "MAN",
+      "rule": "Include a description field that explains what the plugin does in active voice (~50-200 chars, function-focused, non-empty, not vague filler).",
+      "appliesTo": "all plugins intended for distribution (description present)",
+      "sources": [
+        "plugin-structure",
+        "plugin-validator"
+      ]
+    },
+    {
+      "id": "MAN-6",
+      "dimension": "MAN",
+      "rule": "Optional metadata fields, when present, MUST use their documented types: author object {name(req),email?,url?} or string; homepage string (docs/landing, not source/issues); repository string or {type,url[,directory]}; license a valid SPDX id; keywords an array (~5-10) not duplicating the name; displayName/$schema string; defaultEnabled boolean.",
+      "appliesTo": "plugins whose plugin.json declares any of these optional metadata fields",
+      "sources": [
+        "plugin-structure",
+        "plugin-validator",
+        "Anthropic official docs — plugins-reference"
+      ]
+    },
+    {
+      "id": "MAN-7",
+      "dimension": "MAN",
+      "rule": "Any custom component path in plugin.json (skills/commands/agents/hooks/mcpServers/etc.) MUST be a relative path starting with ./, use forward slashes only, never use absolute paths or '..' traversal, and resolve to a path that actually exists.",
+      "appliesTo": "plugins that declare custom component paths in plugin.json (n-a when relying on default dirs)",
+      "sources": [
+        "plugin-structure",
+        "Anthropic official docs — plugins-reference"
+      ]
+    },
+    {
+      "id": "MAN-8",
+      "dimension": "MAN",
+      "rule": "Keep the manifest lean: rely on default directories and declare custom paths only when a non-standard layout truly requires it. Note path-effect semantics — commands/agents/outputStyles paths REPLACE the default scan (list the default explicitly to keep it) while skills paths ADD to the always-scanned skills/. From v2.1.140 having both a default folder and its manifest key flags the ignored folder in /doctor.",
+      "appliesTo": "all plugins (the replace/add caveat applies only when custom paths are declared)",
+      "sources": [
+        "plugin-structure",
+        "Anthropic official docs — plugins-reference"
+      ]
+    },
+    {
+      "id": "MAN-9",
+      "dimension": "MAN",
+      "rule": "Keep manifest metadata current with the plugin: bump version on changes and keep description/keywords matching actual capabilities.",
+      "appliesTo": "all plugins under active maintenance",
+      "sources": [
+        "plugin-structure"
+      ]
+    },
+    {
+      "id": "NAME-1",
+      "dimension": "NAME",
+      "rule": "The plugin name MUST match kebab-case /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/ (lowercase letters/digits/hyphens, start with a letter, no leading/trailing/double hyphen, no spaces or special chars) and be unique across installed plugins.",
+      "appliesTo": "every plugin's plugin.json name and its marketplace.json entry name",
+      "sources": [
+        "plugin-structure",
+        "plugin-validator",
+        "Anthropic official docs — plugins-reference",
+        "Anthropic official docs — plugin-marketplaces"
+      ]
+    },
+    {
+      "id": "NAME-2",
+      "dimension": "NAME",
+      "rule": "Use kebab-case for ALL directory and file names across the plugin, including command files (code-review.md -> /code-review), agent files (code-reviewer.md), skill directories (error-handling/), helper scripts (validate-input.sh), and supporting docs (api-reference.md).",
+      "appliesTo": "all plugins (per component type actually shipped)",
+      "sources": [
+        "plugin-structure"
+      ]
+    },
+    {
+      "id": "NAME-3",
+      "dimension": "NAME",
+      "rule": "Only .claude-plugin/plugin.json belongs in .claude-plugin/. All component directories (commands/, agents/, skills/, hooks/, output-styles/, themes/, monitors/) MUST sit at the plugin root; components nested inside .claude-plugin/ silently fail to load. Create only the directories the plugin actually uses.",
+      "appliesTo": "every plugin's directory tree",
+      "sources": [
+        "plugin-structure",
+        "plugin-validator",
+        "Anthropic official docs — plugins-reference"
+      ]
+    },
+    {
+      "id": "NAME-4",
+      "dimension": "NAME",
+      "rule": "Use unique, descriptive, purpose-indicating component names; avoid vague ones (utils, misc, temp) and names that collide with common commands. Avoid deep directory nesting and keep component configs small for fast discovery.",
+      "appliesTo": "all plugins with components",
+      "sources": [
+        "plugin-structure"
+      ]
+    },
+    {
+      "id": "NAME-5",
+      "dimension": "NAME",
+      "rule": "Reference intra-plugin files (hook commands, scripts, MCP args, skill/agent content) via ${CLAUDE_PLUGIN_ROOT}; never hardcode absolute paths, ~/ home shortcuts, or cwd-relative paths. ${CLAUDE_PLUGIN_ROOT} changes on update and the old dir is cleaned up later — treat it as ephemeral, do not persist state there.",
+      "appliesTo": "all plugins that reference their own bundled files (hooks, scripts, MCP, content)",
+      "sources": [
+        "plugin-structure",
+        "command-development",
+        "mcp-integration",
+        "plugin-validator",
+        "Anthropic official docs — plugins-reference"
+      ]
+    },
+    {
+      "id": "NAME-6",
+      "dimension": "NAME",
+      "rule": "Do not reference files outside the plugin's own directory (installed plugins are copied to ~/.claude/plugins/cache, so '../shared' paths break). Share files within the same marketplace via symlinks only.",
+      "appliesTo": "every plugin's bundled file references",
+      "sources": [
+        "Anthropic official docs — plugins-reference"
+      ]
+    },
+    {
+      "id": "HOOK-1",
+      "dimension": "HOOK",
+      "rule": "In this repo hooks MUST be declared INLINE in plugin.json under a hooks key; do NOT add a separate hooks/hooks.json. (Docs permit either location; the house convention is inline.)",
+      "appliesTo": "plugins that ship hooks (git-guard, shell-guard, rtk-hook, voice-notify)",
+      "sources": [
+        "CLAUDE.md",
+        "plugin-structure",
+        "hook-development",
+        "Anthropic official docs — plugins-reference"
+      ],
+      "conflictNote": "Official docs and plugin-structure allow hooks/hooks.json OR inline plugin.json; CLAUDE.md (house rule) mandates inline. House rule governs here on style/structure."
+    },
+    {
+      "id": "HOOK-2",
+      "dimension": "HOOK",
+      "rule": "Each hook entry MUST specify a valid event name, a matcher where applicable (case-sensitive tool match; '*' wildcard ok), and a hooks array; each command handler MUST have type 'command' and a non-empty command string. The hook config (inline or hooks.json) MUST be valid JSON or the whole plugin fails to load.",
+      "appliesTo": "plugins that ship hooks",
+      "sources": [
+        "plugin-structure",
+        "hook-development",
+        "plugin-validator",
+        "Anthropic official docs — plugins-reference",
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "HOOK-3",
+      "dimension": "HOOK",
+      "rule": "Hook event names MUST be from the supported set and exactly cased: PreToolUse, PostToolUse, UserPromptSubmit, Stop, SubagentStop, SessionStart, SessionEnd, PreCompact, Notification (PostToolUse not postToolUse).",
+      "appliesTo": "plugins that ship hooks",
+      "sources": [
+        "plugin-structure",
+        "hook-development",
+        "plugin-validator",
+        "Anthropic official docs — hooks"
+      ]
+    },
+    {
+      "id": "HOOK-4",
+      "dimension": "HOOK",
+      "rule": "Command hooks MUST read the event as JSON on STDIN (input=$(cat)) and parse fields with jq (.tool_input.command, .cwd, .tool_name, etc.); there is no $CLAUDE_TOOL_INPUT env var and reading tool input from the environment yields empty input (a fail-open bug).",
+      "appliesTo": "plugins shipping command-type hook scripts",
+      "sources": [
+        "hook-development",
+        "CLAUDE.md",
+        "Anthropic official docs — hooks"
+      ]
+    },
+    {
+      "id": "HOOK-5",
+      "dimension": "HOOK",
+      "rule": "A blocking guard hook MUST block with exit 2 (stderr is fed back to Claude); exit 0 allows (stdout JSON parsed); exit 1 (or any other code) is non-blocking and the tool still runs. Choose exit codes OR JSON output — only exit 0 processes JSON. Never rely on exit 1 to block.",
+      "appliesTo": "command-type hook scripts that gate/block operations (git-guard, shell-guard)",
+      "sources": [
+        "hook-development",
+        "CLAUDE.md",
+        "Anthropic official docs — hooks"
+      ]
+    },
+    {
+      "id": "HOOK-6",
+      "dimension": "HOOK",
+      "rule": "Emit blocking/denial messages to stderr (>&2), not stdout; structured JSON output (e.g. hookSpecificOutput.permissionDecision allow|deny|ask, or decision approve|block) MUST be well-formed and parse with jq.",
+      "appliesTo": "command-type hook scripts that block or emit structured output",
+      "sources": [
+        "hook-development"
+      ]
+    },
+    {
+      "id": "HOOK-7",
+      "dimension": "HOOK",
+      "rule": "A blocking guard hook MUST remain synchronous; use \"async\": true only for fire-and-forget hooks (e.g. notifications). An async hook cannot block.",
+      "appliesTo": "hook declarations (synchronous required for git-guard/shell-guard; async allowed for voice-notify)",
+      "sources": [
+        "CLAUDE.md",
+        "Anthropic official docs — hooks"
+      ]
+    },
+    {
+      "id": "HOOK-8",
+      "dimension": "HOOK",
+      "rule": "Set an explicit timeout per hook appropriate to its work (command default 60s, prompt default 30s; recommended 5-600s, must be numeric) and keep every hook short-running with no sleeps that could exceed it.",
+      "appliesTo": "plugins that ship hooks",
+      "sources": [
+        "hook-development",
+        "plugin-validator"
+      ]
+    },
+    {
+      "id": "HOOK-9",
+      "dimension": "HOOK",
+      "rule": "Restrict prompt-type hooks to events that support them (Stop, SubagentStop, UserPromptSubmit, PreToolUse) and give them a non-empty prompt field; use command type for fast deterministic checks and prompt type for context-dependent reasoning.",
+      "appliesTo": "plugins shipping prompt-type hooks (n-a for command-only hook plugins like the current ones)",
+      "sources": [
+        "hook-development",
+        "plugin-validator"
+      ]
+    },
+    {
+      "id": "HOOK-10",
+      "dimension": "HOOK",
+      "rule": "Hook scripts MUST start with a shebang (#!/bin/bash or #!/usr/bin/env bash), be marked executable (chmod +x), target macOS bash 3.2 (avoid associative-array features), use set -u (skill suggests set -euo pipefail), quote all variable expansions, and put comments that explain why not what.",
+      "appliesTo": "plugins shipping command-type hook scripts (plugins/<name>/scripts/*.sh)",
+      "sources": [
+        "hook-development",
+        "CLAUDE.md",
+        "Anthropic official docs — plugins-reference"
+      ],
+      "conflictNote": "hook-development recommends set -euo pipefail; CLAUDE.md mandates only set -u and graceful (fail-open) degradation. CLAUDE.md governs here because pipefail/-e can hard-fail a guard that must degrade cleanly; require at minimum set -u plus quoted expansions."
+    },
+    {
+      "id": "HOOK-11",
+      "dimension": "HOOK",
+      "rule": "Hooks MUST degrade gracefully: a jq-dependent hook no-ops (fails open) with a one-line warning if jq is missing rather than blocking; missing/empty fields and absent files are handled gracefully (exit 0 / continue) rather than crashing.",
+      "appliesTo": "command-type hook scripts (plugins/<name>/scripts/*.sh)",
+      "sources": [
+        "CLAUDE.md",
+        "hook-development"
+      ]
+    },
+    {
+      "id": "HOOK-12",
+      "dimension": "HOOK",
+      "rule": "Validate and sanitize extracted input before use; reject path traversal ('..') and writes to system dirs (/etc, /sys, /usr) in write-validation hooks; never log or echo secrets/credentials from a hook.",
+      "appliesTo": "command-type hook scripts (write-validation specifics apply only to Write/Edit-guard hooks)",
+      "sources": [
+        "hook-development",
+        "plugin-validator"
+      ]
+    },
+    {
+      "id": "HOOK-13",
+      "dimension": "HOOK",
+      "rule": "Treat .cwd as the session working directory, not a cd target; resolve other repos with git -C <path> when location matters. Design each hook to run independently (matching hooks run in parallel, non-deterministic order) and not mutate shared global state unpredictably.",
+      "appliesTo": "command-type hook scripts that reason about repo/location or coordinate with other hooks",
+      "sources": [
+        "CLAUDE.md",
+        "hook-development"
+      ]
+    },
+    {
+      "id": "HOOK-14",
+      "dimension": "HOOK",
+      "rule": "Persisted environment variables may only be appended to $CLAUDE_ENV_FILE and only from SessionStart hooks; cross-event temp-file state is for sequential events (PreToolUse->PostToolUse) only, never shared between parallel hooks.",
+      "appliesTo": "hooks that persist env vars (SessionStart) or coordinate cross-event state (n-a for current single-event guards)",
+      "sources": [
+        "hook-development"
+      ]
+    },
+    {
+      "id": "HOOK-15",
+      "dimension": "HOOK",
+      "rule": "Verify each hook before shipping: bash -n syntax check, shellcheck lint, validate hook JSON with jq, and test the script with synthetic stdin asserting exit codes (block=2 vs allow=0) in real temp git repos where branch state matters.",
+      "appliesTo": "plugins shipping command-type hook scripts",
+      "sources": [
+        "hook-development",
+        "CLAUDE.md",
+        "plugin-validator"
+      ]
+    },
+    {
+      "id": "HOOK-16",
+      "dimension": "HOOK",
+      "rule": "If a command handler includes an args array it uses exec form (no shell; no pipes/&&/globs; placeholders need no quoting). Without args it uses shell form (sh -c), so ${CLAUDE_PLUGIN_ROOT} MUST be double-quoted to survive spaces; pipes/redirects require shell form.",
+      "appliesTo": "plugins declaring hook command handlers (form depends on whether args is present)",
+      "sources": [
+        "Anthropic official docs — hooks",
+        "Anthropic official docs — plugins-reference"
+      ]
+    },
+    {
+      "id": "HOOK-17",
+      "dimension": "HOOK",
+      "rule": "Read configuration with precedence env var -> ~/.claude/<plugin>.conf -> built-in default; parse the conf safely (read KEY=VALUE via grep/parameter expansion) and NEVER source it, so a stray/untrusted conf cannot execute shell.",
+      "appliesTo": "plugins that read configuration (git-guard, shell-guard, rtk-hook)",
+      "sources": [
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "CMD-1",
+      "dimension": "CMD",
+      "rule": "Commands MUST be .md files placed in commands/ (auto-discovered), each opening with valid YAML frontmatter followed by an imperative markdown body directed at Claude (not user-facing prose); the body MUST be non-empty.",
+      "appliesTo": "plugins shipping slash commands",
+      "sources": [
+        "command-development",
+        "plugin-structure",
+        "plugin-validator",
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "CMD-2",
+      "dimension": "CMD",
+      "rule": "Command frontmatter MUST include a description; keep it under ~60 chars, verb-first, specific, with no redundant 'command'/'This command...' filler. The repo convention is to also declare allowed-tools.",
+      "appliesTo": "plugins shipping slash commands",
+      "sources": [
+        "command-development",
+        "plugin-validator",
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "CMD-3",
+      "dimension": "CMD",
+      "rule": "Declare allowed-tools (an array) scoped as tightly as possible: filter Bash to specific commands (e.g. Bash(git:*)) rather than bare Bash/Bash(*), include Bash when using inline !`...` execution and Read when using @ file references, and avoid allowed-tools:* unless genuinely needed.",
+      "appliesTo": "slash commands that need particular tools",
+      "sources": [
+        "command-development"
+      ]
+    },
+    {
+      "id": "CMD-4",
+      "dimension": "CMD",
+      "rule": "Provide an argument-hint whenever the command consumes arguments: wrap each arg in square brackets, use descriptive names (not arg1/arg2), and order them to match positional $1/$2. Use $ARGUMENTS for all-args or $1/$2 for positional, matching invocation.",
+      "appliesTo": "slash commands that consume arguments (n-a for argument-less commands)",
+      "sources": [
+        "command-development"
+      ]
+    },
+    {
+      "id": "CMD-5",
+      "dimension": "CMD",
+      "rule": "If the model field is set it MUST be a valid Claude model (sonnet, opus, or haiku); omit it unless a non-default model is specifically needed.",
+      "appliesTo": "slash commands that set the model field (n-a otherwise)",
+      "sources": [
+        "command-development"
+      ]
+    },
+    {
+      "id": "CMD-6",
+      "dimension": "CMD",
+      "rule": "Set disable-model-invocation:true for commands that must be manually invoked, are destructive/irreversible, or require human judgment; use it sparingly.",
+      "appliesTo": "manual-only / destructive / interactive slash commands (e.g. *-uninstall control commands)",
+      "sources": [
+        "command-development"
+      ]
+    },
+    {
+      "id": "CMD-7",
+      "dimension": "CMD",
+      "rule": "Use @ syntax to include file contents and inline !`command` for dynamic context gathering; keep inline bash fast and read-only (no long-running or destructive operations, since it runs automatically on invocation).",
+      "appliesTo": "slash commands that include files or gather dynamic context",
+      "sources": [
+        "command-development"
+      ]
+    },
+    {
+      "id": "CMD-8",
+      "dimension": "CMD",
+      "rule": "Give each command a single responsibility and a verb-noun name (review-pr, fix-issue); use hyphens for multi-word names, avoid generic colliding names, consider a plugin-name prefix to avoid collisions, and namespace via subdirectories once the set grows (5+ plugin commands).",
+      "appliesTo": "plugins shipping slash commands",
+      "sources": [
+        "command-development"
+      ]
+    },
+    {
+      "id": "CMD-9",
+      "dimension": "CMD",
+      "rule": "Validate arguments and resources in the command body before acting: check required args with usage fallback, verify referenced files exist (test -f), verify bundled scripts/config exist under ${CLAUDE_PLUGIN_ROOT}, and capture invoked-script errors (2>&1 + sentinel) with troubleshooting guidance.",
+      "appliesTo": "slash commands that consume arguments or depend on bundled scripts/files",
+      "sources": [
+        "command-development"
+      ]
+    },
+    {
+      "id": "CMD-10",
+      "dimension": "CMD",
+      "rule": "A command that writes config a plugin cannot set declaratively MUST gather/validate input, read the target, show the diff, confirm with the user, then merge with jq (never clobbering unrelated keys), and document the restart requirement where relevant.",
+      "appliesTo": "config-writing commands (e.g. statusline-install and *-uninstall control commands that edit settings.json)",
+      "sources": [
+        "CLAUDE.md",
+        "command-development"
+      ]
+    },
+    {
+      "id": "CMD-11",
+      "dimension": "CMD",
+      "rule": "When a command launches a plugin agent, relies on a plugin skill, or coordinates with plugin hooks, the referenced agent/skill MUST exist in the plugin and the hook interaction MUST be documented.",
+      "appliesTo": "commands that delegate to a plugin agent/skill or coordinate with hooks",
+      "sources": [
+        "command-development"
+      ]
+    },
+    {
+      "id": "CMD-12",
+      "dimension": "CMD",
+      "rule": "Document non-obvious command logic, usage, requirements, and examples in HTML comments within the command file (they do not appear in Claude's prompt output).",
+      "appliesTo": "non-trivial slash commands",
+      "sources": [
+        "command-development"
+      ]
+    },
+    {
+      "id": "SKILL-1",
+      "dimension": "SKILL",
+      "rule": "Each skill MUST live in its own kebab-case subdirectory under the plugin's skills/ directory containing a file named exactly SKILL.md (a single SKILL.md at the plugin root is also accepted as a single-skill plugin, v2.1.142+). README.md or other names are not recognized.",
+      "appliesTo": "plugins shipping skills (session-finalise, project-scope)",
+      "sources": [
+        "skill-development",
+        "plugin-structure",
+        "plugin-validator",
+        "Anthropic official docs — plugins-reference"
+      ]
+    },
+    {
+      "id": "SKILL-2",
+      "dimension": "SKILL",
+      "rule": "SKILL.md MUST begin with valid YAML frontmatter declaring name and description (plugin skills should also carry a version); set the frontmatter name explicitly — without it Claude falls back to the install-dir basename, which for marketplace installs is a version string that changes every update.",
+      "appliesTo": "plugins shipping skills",
+      "sources": [
+        "skill-development",
+        "plugin-structure",
+        "plugin-validator",
+        "Anthropic official docs — plugins-reference"
+      ]
+    },
+    {
+      "id": "SKILL-3",
+      "dimension": "SKILL",
+      "rule": "Write the skill description in THIRD person ('This skill should be used when...'), not second person; include specific trigger phrases and concrete scenarios (what it does AND when to use it), never a vague 'Provides guidance for X'.",
+      "appliesTo": "plugins shipping skills",
+      "sources": [
+        "skill-development"
+      ]
+    },
+    {
+      "id": "SKILL-4",
+      "dimension": "SKILL",
+      "rule": "SKILL.md MUST have a substantial instruction body written in imperative/infinitive (verb-first) objective language — not second person ('You should'), not actor-narration ('Claude should', 'The user might').",
+      "appliesTo": "plugins shipping skills",
+      "sources": [
+        "skill-development"
+      ]
+    },
+    {
+      "id": "SKILL-5",
+      "dimension": "SKILL",
+      "rule": "Keep the SKILL.md body lean (target 1,500-2,000 words, hard cap under 5,000, ideally under 3,000) holding core concepts, essential procedures, quick-reference, and pointers; move detailed patterns/advanced techniques/edge cases/extensive examples into references/ without duplicating across files.",
+      "appliesTo": "plugins shipping skills",
+      "sources": [
+        "skill-development"
+      ]
+    },
+    {
+      "id": "SKILL-6",
+      "dimension": "SKILL",
+      "rule": "Reference every bundled resource (references/, examples/, scripts/, assets/) explicitly from SKILL.md, and every referenced file MUST actually exist on disk; for reference files over 10k words include grep search patterns in SKILL.md.",
+      "appliesTo": "skills with bundled resources (n-a for self-contained single-file skills)",
+      "sources": [
+        "skill-development",
+        "plugin-validator"
+      ]
+    },
+    {
+      "id": "SKILL-7",
+      "dimension": "SKILL",
+      "rule": "Put runnable code in scripts/ (executable, documented, tested), domain docs/schemas Claude reads while working in references/, output templates/media in assets/, and complete runnable examples in examples/; create only the subdirectories actually needed and delete unused scaffolding.",
+      "appliesTo": "skills shipping scripts/references/assets/examples (n-a for skills with none)",
+      "sources": [
+        "skill-development"
+      ]
+    },
+    {
+      "id": "AGT-1",
+      "dimension": "AGT",
+      "rule": "Agents MUST be .md files in agents/ with YAML frontmatter opened and closed by --- lines and a non-empty second-person system-prompt body (20-10,000 chars, ideally 500-3,000) establishing role, concrete responsibilities, a step-by-step process, an output format, quality standards, and edge-case handling.",
+      "appliesTo": "plugins shipping agents — n-a for every current cc-goodies plugin (none ship an agents/ directory)",
+      "sources": [
+        "agent-development",
+        "plugin-structure",
+        "plugin-validator"
+      ]
+    },
+    {
+      "id": "AGT-2",
+      "dimension": "AGT",
+      "rule": "Agent frontmatter MUST declare name (3-50 chars, alphanumeric-start/end, lowercase+digits+hyphens, not generic like helper/assistant/agent/tool), description (>=10 chars, 'Use this agent when...' phrasing with 2-4 trigger scenarios, ideally with an <example> block), model (inherit|sonnet|opus|haiku), and color (blue|cyan|green|yellow|magenta|red, distinct per agent).",
+      "appliesTo": "plugins shipping agents — n-a for every current cc-goodies plugin (none ship agents)",
+      "sources": [
+        "agent-development",
+        "plugin-validator"
+      ]
+    },
+    {
+      "id": "AGT-3",
+      "dimension": "AGT",
+      "rule": "Restrict the agent tools array to the minimum real tool names needed (least privilege); include a body 'When to invoke' section with 2-5 named scenarios spanning explicit/proactive/implicit triggers; document the agent in the README. For security, plugin-shipped agents do NOT support hooks, mcpServers, or permissionMode, and the only valid isolation value is 'worktree'.",
+      "appliesTo": "plugins shipping agents — n-a for every current cc-goodies plugin (none ship agents)",
+      "sources": [
+        "agent-development",
+        "Anthropic official docs — plugins-reference"
+      ]
+    },
+    {
+      "id": "MCP-1",
+      "dimension": "MCP",
+      "rule": "MCP servers MUST be declared in a .mcp.json at the plugin root (preferred, especially for multiple servers) or inline in plugin.json under mcpServers; the config MUST be valid JSON. Each entry needs its type-specific required fields: command for stdio, url for sse/http/ws.",
+      "appliesTo": "plugins integrating MCP servers — n-a for every current cc-goodies plugin (none ship MCP servers)",
+      "sources": [
+        "mcp-integration",
+        "plugin-structure",
+        "plugin-validator",
+        "Anthropic official docs — plugins-reference"
+      ]
+    },
+    {
+      "id": "MCP-2",
+      "dimension": "MCP",
+      "rule": "Reference bundled server paths via ${CLAUDE_PLUGIN_ROOT} (never hardcoded paths); reference secrets via env-var expansion (never literals); never commit credentials or embed real tokens in docs; document required env vars / OAuth scopes / setup steps in the README. Use HTTPS/WSS for remote servers, never plain HTTP/WS.",
+      "appliesTo": "plugins integrating MCP servers — n-a for every current cc-goodies plugin (none ship MCP servers)",
+      "sources": [
+        "mcp-integration",
+        "plugin-validator",
+        "Anthropic official docs — plugins-reference"
+      ]
+    },
+    {
+      "id": "MCP-3",
+      "dimension": "MCP",
+      "rule": "For stdio servers pass credentials/config via the env map or args (never stdin or the command line), set PYTHONUNBUFFERED=1 for Python servers, and keep stdout exclusively for the JSON-RPC protocol (log to stderr only).",
+      "appliesTo": "plugins shipping stdio MCP servers — n-a for every current cc-goodies plugin (none ship MCP servers)",
+      "sources": [
+        "mcp-integration"
+      ]
+    },
+    {
+      "id": "MCP-4",
+      "dimension": "MCP",
+      "rule": "Commands/agents invoking MCP tools MUST reference them by the exact prefixed name mcp__plugin_<plugin>_<server>__<tool> (server segment matching the config key), pre-allow only the specific tools needed (not wildcards), validate inputs against the tool schema, handle connection/tool errors with actionable messages, confirm before destructive operations, and test that servers appear in /mcp before publishing.",
+      "appliesTo": "commands/agents invoking MCP tools — n-a for every current cc-goodies plugin (none ship MCP integration)",
+      "sources": [
+        "mcp-integration"
+      ]
+    },
+    {
+      "id": "SET-1",
+      "dimension": "CONV",
+      "rule": "Per-project plugin settings/state SHOULD live in .claude/<plugin-name>.local.md (frontmatter + optional markdown body, .local suffix, chmod 600, gitignored and README-documented). Read with a quick-exit pattern (missing file -> exit 0; enabled != true -> exit 0), provide validated defaults, update atomically (temp file + mv, never sed -i), and reject '..' in any path value.",
+      "appliesTo": "plugins that store per-project user-configurable settings via .claude/*.local.md (current cc-goodies config plugins use ~/.claude/<plugin>.conf instead — see HOOK-17)",
+      "sources": [
+        "plugin-settings"
+      ],
+      "conflictNote": "plugin-settings documents the project-local .claude/<plugin>.local.md pattern; cc-goodies' guard/rtk-hook plugins instead use the CLAUDE.md ~/.claude/<plugin>.conf convention (HOOK-17). For current plugins, HOOK-17 governs config location; this SET-1 pattern applies only if a plugin adopts project-local settings files."
+    },
+    {
+      "id": "DOC-1",
+      "dimension": "DOC",
+      "rule": "Every plugin MUST ship a comprehensive root-level README.md documenting purpose and usage; plugin instructions intended for Claude's context MUST be shipped via a skill/agent/hook, since a plugin-root CLAUDE.md is NOT loaded as project context.",
+      "appliesTo": "every plugin under plugins/<name>/",
+      "sources": [
+        "plugin-structure",
+        "plugin-validator",
+        "Anthropic official docs — plugins-reference"
+      ]
+    },
+    {
+      "id": "DOC-2",
+      "dimension": "DOC",
+      "rule": "Each plugin's README MUST contain both an Install section and an Uninstall section, and the root README.md MUST mirror both for every plugin.",
+      "appliesTo": "every plugin README and the repo root README.md",
+      "sources": [
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "DOC-3",
+      "dimension": "DOC",
+      "rule": "A hook plugin documents that /plugin install activates its inline hook and /plugin uninstall removes it; pure-hook/self-contained plugins that write nothing outside their dir MUST state that /plugin uninstall is the full revert. Document each shipped hook's events, behavior, and how to enable/disable any flag-gated hook.",
+      "appliesTo": "hook plugins and self-contained plugins (git-guard, shell-guard, rtk-hook, voice-notify, session-finalise, project-scope)",
+      "sources": [
+        "CLAUDE.md",
+        "hook-development"
+      ]
+    },
+    {
+      "id": "DOC-4",
+      "dimension": "DOC",
+      "rule": "A plugin with toggleable/conditional hooks MUST document an escape hatch / opt-out (flag file or config key) and that hook/settings changes require a Claude Code restart (hooks load at session start and cannot be hot-swapped).",
+      "appliesTo": "plugins with toggleable or conditionally-active hooks (git-guard, shell-guard, rtk-hook)",
+      "sources": [
+        "hook-development",
+        "plugin-settings"
+      ]
+    },
+    {
+      "id": "SYM-1",
+      "dimension": "SYM",
+      "rule": "Every setup step a plugin performs MUST have a documented inverse teardown step; a change that adds setup without its corresponding teardown is incomplete. This is about verbs (each install action reverses), not a mandate to ship matching /<name>-install + /<name>-uninstall pairs.",
+      "appliesTo": "every plugin under plugins/<name>/",
+      "sources": [
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "SYM-2",
+      "dimension": "SYM",
+      "rule": "Every install verb a plugin ships MUST have its matching inverse: marketplace add <-> marketplace remove, /plugin install <-> /plugin uninstall, and /<name>-install <-> /<name>-uninstall when present.",
+      "appliesTo": "every plugin under plugins/<name>/",
+      "sources": [
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "SYM-3",
+      "dimension": "SYM",
+      "rule": "A hook plugin MUST NOT ship a /<name>-install just to activate its hook (inline declaration + /plugin install/uninstall is the baseline round-trip). Ship a /<name>-install ONLY when setup must write durable state a plugin cannot set declaratively (statusline wiring the statusLine key is the lone qualifying example).",
+      "appliesTo": "every plugin under plugins/<name>/ (statusline is the only one that qualifies for an install command)",
+      "sources": [
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "SYM-4",
+      "dimension": "SYM",
+      "rule": "A plugin that writes durable state OUTSIDE its own directory (~/.claude/settings.json, ~/.claude/<plugin>.conf, files under $HOME) MUST ship a /<name>-uninstall command (or fold the revert into its /<name> control command) that reverts exactly that state — even with no install command.",
+      "appliesTo": "plugins that write durable external state (statusline, git-guard, shell-guard, rtk-hook)",
+      "sources": [
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "SYM-5",
+      "dimension": "SYM",
+      "rule": "An uninstall/revert command that edits shared config MUST back up that config before editing, verify it still parses afterward, and refuse to touch state the user configured themselves (modify only state the plugin created).",
+      "appliesTo": "uninstall/revert commands that edit shared/external config (statusline-uninstall, git-guard-uninstall, shell-guard-uninstall, rtk-hook-uninstall)",
+      "sources": [
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "SYM-6",
+      "dimension": "SYM",
+      "rule": "A pure-hook/self-contained plugin that writes nothing outside its own directory relies on /plugin uninstall as its full revert and MUST say so in its docs; ephemeral $TMPDIR caches need no teardown and are exempt from the symmetry requirement.",
+      "appliesTo": "self-contained plugins (voice-notify, session-finalise, project-scope) and any plugin writing only $TMPDIR caches",
+      "sources": [
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "VAL-1",
+      "dimension": "VAL",
+      "rule": "Validate before publishing with `claude plugin validate <path>` (or /plugin validate): pointed at the marketplace dir it checks marketplace.json schema, duplicate plugin names, source path traversal, and plugin.json version mismatches; pointed at a plugin dir it checks plugin.json plus skill/agent/command YAML frontmatter and hook JSON. Use --strict in CI to treat warnings as errors.",
+      "appliesTo": "the repo root marketplace and every plugins/<name>/ directory (always applies before release)",
+      "sources": [
+        "Anthropic official docs — plugins-reference",
+        "plugin-validator",
+        "CLAUDE.md"
+      ]
+    },
+    {
+      "id": "VAL-2",
+      "dimension": "VAL",
+      "rule": "A malformed hooks config (hooks/hooks.json or inline hooks JSON) prevents the ENTIRE plugin from loading; validate hook JSON syntax and structure (valid event keys, matcher present where applicable, non-empty hooks array, type command/prompt, command/prompt non-empty, numeric timeout, referenced scripts exist) before shipping.",
+      "appliesTo": "plugins shipping hooks",
+      "sources": [
+        "plugin-validator",
+        "Anthropic official docs — plugins-reference",
+        "hook-development"
+      ]
+    },
+    {
+      "id": "VAL-3",
+      "dimension": "VAL",
+      "rule": "Run the repo's pre-commit gate on every script/manifest change: bash -n and shellcheck on changed scripts, and jq empty on the changed plugin's plugin.json and on .claude-plugin/marketplace.json.",
+      "appliesTo": "any change to plugins/<name>/scripts/*.sh, plugin.json, or marketplace.json",
+      "sources": [
+        "CLAUDE.md",
+        "plugin-validator"
+      ]
+    },
+    {
+      "id": "VAL-4",
+      "dimension": "VAL",
+      "rule": "No plugin file may contain hardcoded credentials/secrets (including example files), and the plugin MUST NOT include junk files (node_modules, .DS_Store). Hook scripts MUST NOT contain obvious security issues, since they run automatically with the user's privileges.",
+      "appliesTo": "all plugins (example-file and hook-script clauses apply only where those exist)",
+      "sources": [
+        "plugin-validator",
+        "mcp-integration"
+      ]
+    },
+    {
+      "id": "VAL-5",
+      "dimension": "VAL",
+      "rule": "Component frontmatter MUST validate: command files start with --- frontmatter, carry a description, an allowed-tools value (if present) is an array, and have a non-empty body; agent files carry name/description/model/color with a non-empty body; SKILL.md carries name/description. Command names within a plugin MUST NOT conflict.",
+      "appliesTo": "plugins shipping commands and/or skills (agent clause n-a — no agents in this marketplace)",
+      "sources": [
+        "plugin-validator",
+        "command-development",
+        "skill-development",
+        "agent-development"
+      ]
+    },
+    {
+      "id": "VAL-6",
+      "dimension": "VAL",
+      "rule": "Plugins SHOULD include a LICENSE file (and a SPDX license field) when distributing, and a .gitignore when there are generated artifacts/local files to exclude.",
+      "appliesTo": "plugins intended for distribution",
+      "sources": [
+        "plugin-structure",
+        "plugin-validator"
+      ]
+    }
+  ],
+  "dimensionsCovered": [
+    "MKT",
+    "MAN",
+    "NAME",
+    "HOOK",
+    "CMD",
+    "SKILL",
+    "AGT",
+    "MCP",
+    "CONV",
+    "DOC",
+    "SYM",
+    "VAL"
+  ],
+  "coverageNote": "All component types USED by this marketplace have >=1 rubric item: hooks (HOOK-1..17, plus VAL-2), commands (CMD-1..12, VAL-5), skills (SKILL-1..7, VAL-5), marketplace registration (MKT-1..11), manifest (MAN-1..9), docs/README (DOC-1..4), install/uninstall symmetry (SYM-1..6), naming/structure (NAME-1..6), other conventions/config (CONV: HOOK-17 config-precedence and SET-1 settings pattern), and validation (VAL-1..6). AGT (AGT-1..3) and MCP (MCP-1..4) items are included for completeness but every appliesTo is worded to resolve to n-a for all current cc-goodies plugins, since none ship an agents/ directory or an MCP server. Source precedence applied: plugin-dev skills (plugin-structure, hook-development, command-development, skill-development, agent-development, mcp-integration, plugin-settings) + plugin-validator are PRIMARY and govern style/structure; CLAUDE.md is the layered house-rule source (governs inline-hooks HOOK-1, set -u vs pipefail HOOK-10, config location HOOK-17/SET-1, and all SYM items); Anthropic official docs are the VALIDATION layer and govern hard schema facts the skills omit (manifest optionality MAN-1, exec-vs-shell hook form HOOK-16, marketplace source/reserved-name/strict-mode rules MKT-5/7/8/9, agent security restrictions AGT-3, cache/path-traversal NAME-6). conflictNotes are set on MAN-1, HOOK-1, HOOK-10, and SET-1 where sources diverge. Official Anthropic docs WERE available (retrieved 2026-06-21, Claude Code v2.1.x) and were used as the validation layer; no source was unavailable.",
+  "auditDate": "2026-06-21"
+}
