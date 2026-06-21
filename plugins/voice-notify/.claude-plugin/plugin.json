@@ -17,7 +17,8 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
             "args": ["notification"],
-            "async": true
+            "async": true,
+            "timeout": 10
           }
         ]
       }
@@ -30,7 +31,8 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
             "args": ["stop"],
-            "async": true
+            "async": true,
+            "timeout": 10
           }
         ]
       }
