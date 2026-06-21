@@ -193,23 +193,23 @@ printf "\033[32m%s@%s\033[0m  \033[34m%s\033[0m" "$user" "$host" "$short_cwd"
 [ -n "$branch" ] && [ -z "$short_worktree" ] && printf "  \033[33m[%s]\033[0m" "$branch"
 [ -n "$short_worktree" ] && printf "  \033[33mwt:%s\033[0m" "$short_worktree"
 if [ -n "$task" ]; then
-  if [ -n "$latest" ]; then printf "  \033[2;37m\"%s\" → \"%s\"\033[0m" "$task" "$latest"
-  else printf "  \033[2;37m\"%s\"\033[0m" "$task"; fi
+  if [ -n "$latest" ]; then printf "  \033[38;5;243m\"%s\" → \"%s\"\033[0m" "$task" "$latest"
+  else printf "  \033[38;5;243m\"%s\"\033[0m" "$task"; fi
 fi
 printf "\n"
 printf "\033[36m%s\033[0m" "$model"
-[ -n "$effort" ] && printf " \033[2;36m(%s)\033[0m" "$effort"
+[ -n "$effort" ] && printf " \033[38;5;37m(%s)\033[0m" "$effort"
 if [ -n "$used" ]; then
   used_int=$(printf '%.0f' "$used" 2>/dev/null)
   printf "  \033[%smc:%s%%\033[0m" "$(gauge_sgr "$used_int" 25:'38;5;178' 50:'38;5;208' 75:'1;38;5;196')" "$used_int"
-  [ -n "$c_dur" ] && printf " \033[2;37m⧗%s\033[0m" "$c_dur"
+  [ -n "$c_dur" ] && printf " \033[38;5;243m⧗%s\033[0m" "$c_dur"
 fi
 if [ -n "$rl_5h" ] && [ "${rl_5h_int:-0}" -gt 0 ] 2>/dev/null; then
   printf " \033[%sms:%s%%\033[0m" "$(gauge_sgr "$rl_5h_int" 50:'38;5;208' 80:'1;38;5;196')" "$rl_5h_int"
-  [ -n "$s_reset" ] && printf " \033[2;37m⟲%s\033[0m" "$s_reset"
+  [ -n "$s_reset" ] && printf " \033[38;5;243m⟲%s\033[0m" "$s_reset"
 fi
 if [ -n "$rl_7d" ] && [ "${rl_7d_int:-0}" -gt 0 ] 2>/dev/null; then
   printf " \033[%smw:%s%%\033[0m" "$(gauge_sgr "$rl_7d_int" 50:'38;5;208' 75:'1;38;5;196')" "$rl_7d_int"
-  [ -n "$w_reset" ] && printf " \033[2;37m⟲%s\033[0m" "$w_reset"
+  [ -n "$w_reset" ] && printf " \033[38;5;243m⟲%s\033[0m" "$w_reset"
 fi
 printf "\n"
