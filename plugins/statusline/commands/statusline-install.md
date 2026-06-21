@@ -1,6 +1,7 @@
 ---
 description: Install the cc-goodies enriched statusline — copies the script and wires it into settings.json (with confirmation).
 allowed-tools: Bash(mkdir:*), Bash(cp:*), Bash(chmod:*), Bash(jq:*), Bash(test:*), Bash(command -v jq), Read, Edit
+disable-model-invocation: true
 ---
 
 You are installing the **cc-goodies enriched statusline** for the current user. A plugin cannot set the `statusLine` setting itself, so do the wiring carefully and idempotently:
