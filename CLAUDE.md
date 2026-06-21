@@ -95,6 +95,23 @@ Adding a plugin = create `plugins/<name>/` **and** add an entry to
 - **`jq` is the parsing dependency.** Statusline requires it; hooks that need it should
   no-op (fail open) with a one-line warning if it's missing, rather than blocking.
 
+### Documented deviations from the standard (audit-backed)
+
+The best-practice audit ([docs/plugin-audit.md](docs/plugin-audit.md)) confirmed these are
+*intentional* marketplace conventions, not gaps — keep them this way:
+
+- **Thin alias commands omit `allowed-tools`.** A command whose body only delegates to a
+  skill (e.g. `/project-scope`, `/session-finalise`) declares no `allowed-tools`: a command's
+  tool list does not gate the delegated skill, which runs under its own session permissions,
+  so an array there would constrain nothing. Commands that actually run tools still scope
+  `allowed-tools` tightly.
+- **Plugins ship no per-plugin `LICENSE` file.** The repo-root `LICENSE` covers the whole
+  monorepo; every `plugin.json` carries the SPDX `license` field. Add a per-plugin `LICENSE`
+  only if a plugin is ever distributed standalone outside this marketplace.
+- **Command files carry no HTML-comment (`<!-- -->`) maintainer blocks.** A command body *is*
+  the prompt sent to Claude; usage, examples, and rationale live in that body and the plugin
+  README rather than in hidden comments.
+
 ## Hook authoring — the input contract (important)
 
 Hooks receive their event as **JSON on stdin**, not via environment variables. For a
