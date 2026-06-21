@@ -1,6 +1,7 @@
 ---
 description: Remove git-guard — deletes the ~/.claude/git-guard.conf it created and guides full plugin removal (with confirmation). Use /git-guard to just pause it instead.
 allowed-tools: Bash(rm:*), Bash(cp:*), Bash(test:*), Bash(cat:*), Read
+disable-model-invocation: true
 ---
 
 You are removing **git-guard** for the current user. The hook itself lives inside
