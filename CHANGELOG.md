@@ -7,6 +7,8 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-21
+
 ### Added
 
 - **`gpt-search` plugin** — deep web research from a Claude Code session, backed by the
