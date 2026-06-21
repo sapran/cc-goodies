@@ -1,11 +1,13 @@
 ---
 name: session-finalise
+version: 0.2.0
 description: >-
-  Use when wrapping up, closing out, or ending a work session — "finalise the session",
-  "wrap up", "we're done for today", "let's close out", "save state before I stop". Also use
-  when about to stop with loose ends dangling: durable facts not yet saved to memory, a handoff
-  not written, uncommitted or unpushed work, scratch/temp files left behind, stale or merged git
-  worktrees, or tracker tasks (GitHub/Asana/Linear/Jira/etc.) left un-updated.
+  This skill should be used when wrapping up, closing out, or ending a work session —
+  "finalise the session", "wrap up", "we're done for today", "let's close out", "save state
+  before I stop". It should also be used when about to stop with loose ends dangling: durable
+  facts not yet saved to memory, a handoff not written, uncommitted or unpushed work, scratch/temp
+  files left behind, stale or merged git worktrees, or tracker tasks (GitHub/Asana/Linear/Jira/etc.)
+  left un-updated.
 ---
 
 # Session Finalise
