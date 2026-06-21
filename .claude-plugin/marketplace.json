@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Developer-experience extras for Claude Code: spoken notifications, an enriched statusline, a protected-branch guard, a dangerous-command guard, an RTK token-optimizer hook, an end-of-session finaliser, a per-project tool scoper, and a Codex-MCP web-research helper.",
-    "version": "0.5.1",
+    "version": "0.6.0",
     "repository": "https://github.com/sapran/cc-goodies"
   },
   "plugins": [
     {
       "name": "voice-notify",
       "source": "./plugins/voice-notify",
-      "description": "Spoken macOS notifications (via `say`) when Claude needs your attention or finishes a turn. Rotating first-person phrases, configurable voice."
+      "description": "Spoken macOS notifications (via `say`) when Claude needs your attention or finishes a turn. Natural, varied first-person phrasing routed by context; quiet on quick turns; configurable voice."
     },
     {
       "name": "statusline",

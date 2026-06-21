@@ -7,6 +7,25 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-22
+
+### Changed
+
+- **`voice-notify` phrasing is more natural and varied, and `Stop` now stays quiet on quick
+  turns** (plugin `0.2.1` → `0.3.0`). Both events share one composer that always speaks a core
+  phrase and *sometimes* (≈40%, `CLAUDE_VOICE_NOTIFY_GARNISH_PCT`) prefixes a short lead-in
+  joined by a `[[slnc 250]]` prosody pause — multiplicative variety from small pools rather than
+  a flat list, with a comma-and-pause cadence that reads as spoken, not recited. `Notification`
+  now routes by message subtype — a brisk pool for permission prompts, a gentle pool for
+  idle/waiting — and the first-person rewrite is allow-list only: unrecognised wording falls
+  back to a neutral cue instead of being mangled by the old catch-all (e.g. no more "I Code
+  is…"). A new `UserPromptSubmit` hook stamps the turn start to `$TMPDIR`; on `Stop`, turns
+  shorter than `CLAUDE_VOICE_NOTIFY_QUIET_UNDER` seconds (default 20, set 0 to speak every turn)
+  are skipped — you only hear "done" for the long task you walked away from — and clearly long
+  turns draw a wait-acknowledging sign-off. No new dependencies; state is an ephemeral
+  per-session `$TMPDIR` file, so `/plugin uninstall` remains the full revert. `say`-absent,
+  muted (`CLAUDE_VOICE_NOTIFY=off`), and missing-`jq` paths still no-op cleanly.
+
 ## [0.5.1] - 2026-06-21
 
 ### Fixed
