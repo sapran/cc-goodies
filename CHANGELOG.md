@@ -7,6 +7,24 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-21
+
+### Added
+
+- **`statusline` line 2 gains time readouts beside its usage gauges.** The context gauge
+  (`c:`) now carries the session's elapsed wall-clock time, marked with an hourglass `⧗`
+  (counts up, from `cost.total_duration_ms`); the `s:`/`w:` rate-limit gauges each carry a
+  countdown to when that window resets, marked with `⟲` (counts down, from
+  `rate_limits.five_hour.resets_at` / `rate_limits.seven_day.resets_at`). A shared pure-bash
+  humaniser renders a compact two-unit token (`3d4h` / `2h45m` / `23m`); each suffix is
+  optional and renders nothing when its source field is absent, so the layout degrades to the
+  previous output. The reset epochs are cached alongside the existing rate-limit percentages,
+  so the countdowns — and the `s:`/`w:` gauges themselves — now stay live across renders where
+  Claude Code omits the `rate_limits` object, recomputing the remaining time each render; a
+  lapsed (past) epoch shows no countdown. Still one `jq` parse per render, no new dependency,
+  and nothing written outside the script's private `$TMPDIR` cache, so `/plugin uninstall`
+  remains the full revert.
+
 ## [0.3.0] - 2026-06-21
 
 ### Added

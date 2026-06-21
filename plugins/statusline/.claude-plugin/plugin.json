@@ -1,6 +1,6 @@
 {
   "name": "statusline",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Enriched two-line Claude Code statusline, with a /statusline-install installer.",
   "author": {
     "name": "Volodymyr Styran",
