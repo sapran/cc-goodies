@@ -1,5 +1,5 @@
 ---
-description: Finalise the current work session — alias for the session-finalise skill. Runs the end-of-session checklist (durable memory, optional handoff, trackers, commit/stash, cleanup), confirming every irreversible step.
+description: Run the end-of-session finalise checklist.
 argument-hint: [optional notes — e.g. "skip cleanup" or "write a handoff"]
 ---
 
