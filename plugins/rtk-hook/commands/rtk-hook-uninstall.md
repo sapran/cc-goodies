@@ -1,6 +1,7 @@
 ---
 description: Remove rtk-hook — deletes the ~/.claude/rtk-hook.conf it created, offers to restore a hand-wired `rtk hook claude` entry in settings.json, then guides full plugin removal (with confirmation). Use /rtk-hook to just pause it instead.
 allowed-tools: Bash(jq:*), Bash(cp:*), Bash(rm:*), Bash(cat:*), Bash(test:*), Bash(command -v jq), Read
+disable-model-invocation: true
 ---
 
 You are removing **rtk-hook** for the current user. The hook itself lives inside the plugin
