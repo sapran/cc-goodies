@@ -7,6 +7,29 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-22
+
+### Added
+
+- **`statusline` gains a runtime `enriched`/`lean` mode toggle** (plugin `0.4.1` → `0.5.0`).
+  The statusline now renders in one of two modes, switchable while Claude Code is running:
+  `enriched` (the default — today's full two-line output, unchanged) or `lean`, a single
+  compact line of compressed cwd, git branch (or a `wt:` worktree token), model, and the `c:`
+  context gauge — `~/cab/claude.ai  [main]  Opus 4.8  c:42%`. Lean drops `user@host`, the
+  `task → latest` prompt snippet, the `(effort)` tag, the `s:` (5-hour) and `w:` (7-day)
+  rate-limit gauges, and every `⧗`/`⟲` time suffix; the `c:` gauge keeps its value-driven
+  severity colour. Lean is genuinely lighter, not just trimmed — it skips the enriched-only
+  work behind the dropped segments (both transcript reads, the rate-limit/reset bookkeeping,
+  the duration humanising, the effort-from-settings fallback), so it does strictly less I/O
+  per render. The mode is a `STATUSLINE_MODE` key in `~/.claude/statusline.conf` that the
+  script re-reads on every render (read, never `source`d; any value outside `{enriched, lean}`
+  or an absent file/key fails soft to `enriched`), so a flip reaches the already-running
+  session on the next prompt. A new `/statusline-toggle` command flips the mode, or sets it
+  with an `enriched`/`lean` argument; `/statusline-install` is unchanged and writes no conf,
+  and `/statusline-uninstall` now also removes `~/.claude/statusline.conf`, preserving the
+  install ⇄ uninstall symmetry. Still one `jq` parse per render and nothing written outside
+  the script's `$TMPDIR` cache; ships a 10-case test harness under `plugins/statusline/tests/`.
+
 ## [0.6.0] - 2026-06-22
 
 ### Changed
