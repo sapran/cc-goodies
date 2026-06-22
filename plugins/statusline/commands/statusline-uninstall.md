@@ -14,7 +14,9 @@ You are reverting what `/statusline-install` did for the current user. Be carefu
 
 4. **Delete the installed script.** Remove `$HOME/.claude/team-statusline.sh` if it exists (`rm -f`). Never delete any other statusline script (e.g. `statusline-command.sh`).
 
-5. **Report** what was removed and remind the user to:
+5. **Delete the mode configuration.** Remove `$HOME/.claude/statusline.conf` if it exists (`rm -f`, a no-op when absent). This conf is wholly plugin-managed — `/statusline-toggle` creates it to persist `STATUSLINE_MODE`, so removing it here completes the install ⇄ uninstall symmetry for the mode toggle. Unlike the `statusLine` settings key, it is never user-wired, so deleting it is unambiguously safe.
+
+6. **Report** what was removed (the `statusLine` key if owned, `team-statusline.sh`, and `statusline.conf`) and remind the user to:
    - finish removing the plugin: `/plugin uninstall statusline@cc-goodies`
    - run `/hooks` or restart so the statusline disappears.
 

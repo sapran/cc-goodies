@@ -33,6 +33,18 @@ cache_dir="${TMPDIR:-/tmp}/claude-statusline-$(id -u)"
   (.rate_limits.five_hour.resets_at // ""),
   (.rate_limits.seven_day.resets_at // "")')
 
+# Resolve the render mode each render from ~/.claude/statusline.conf. READ the file —
+# never `source` it — so a stray/hostile line can't execute: grep the last STATUSLINE_MODE=
+# line, take the value after the first '=', then validate to the exact set {enriched, lean}.
+# Anything else, or no file / no key, fails soft to the default `enriched` (never errors),
+# so an install with no conf renders exactly as before. No jq here: keeps the one-jq budget.
+mode="enriched"
+if [ -f "$HOME/.claude/statusline.conf" ]; then
+  mode_val=$(grep '^STATUSLINE_MODE=' "$HOME/.claude/statusline.conf" 2>/dev/null | tail -n 1)
+  mode_val="${mode_val#*=}"
+  case "$mode_val" in (enriched|lean) mode="$mode_val" ;; (*) mode="enriched" ;; esac
+fi
+
 # Humanise a non-negative integer seconds count into a compact two-unit token:
 #   >=1d -> <d>d<h>h    >=1h -> <h>h<m>m    <1h -> <m>m    (no spaces, glues to a gauge).
 # Empty or non-digit input prints nothing, so a bad/odd-shaped field renders no suffix
@@ -64,56 +76,61 @@ gauge_sgr() {
   printf '%s' "$out"
 }
 
-if [ -z "$effort" ] && [ -f "$HOME/.claude/settings.json" ]; then
-  effort=$(jq -r '.effortLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null)
+# Enriched-only computations: effort fallback, rate-limit gauge/reset cache, and the
+# time-readout block. Lean shows none of their output, so none of the work runs — gate the
+# whole span behind `mode = enriched` so lean does strictly less I/O per render.
+if [ "$mode" = "enriched" ]; then
+  if [ -z "$effort" ] && [ -f "$HOME/.claude/settings.json" ]; then
+    effort=$(jq -r '.effortLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null)
+  fi
+  [ -z "$effort" ] && effort="auto"
+
+  rl_5h_int=$(printf '%.0f' "${rl_5h:-0}" 2>/dev/null)
+  rl_7d_int=$(printf '%.0f' "${rl_7d:-0}" 2>/dev/null)
+  # Sanitise reset epochs to digits-only: a non-epoch shape (ISO string / milliseconds) is
+  # treated as absent so a schema surprise renders nothing rather than garbage.
+  case "$rl_5h_reset" in (''|*[!0-9]*) rl_5h_reset='' ;; esac
+  case "$rl_7d_reset" in (''|*[!0-9]*) rl_7d_reset='' ;; esac
+
+  # Rate-limit cache line: "5h% 7d% 5h_epoch 7d_epoch" (epochs added this version; an older
+  # 2-field line reads back with empty epochs — forward/backward safe). A "0" placeholder
+  # keeps all four fields positional so an absent middle epoch can't shift the read. Recover
+  # the cache first so absent fields fall back to it: gauges AND reset countdowns stay live
+  # across renders where the JSON omits rate_limits, mirroring the percentage persistence.
+  rl_cache="$cache_dir/claude-ratelimits.cache"
+  cached_5h=''; cached_7d=''; cached_5h_reset=''; cached_7d_reset=''
+  [ -f "$rl_cache" ] && read -r cached_5h cached_7d cached_5h_reset cached_7d_reset < "$rl_cache"
+  case "$cached_5h_reset" in (*[!0-9]*) cached_5h_reset='' ;; esac
+  case "$cached_7d_reset" in (*[!0-9]*) cached_7d_reset='' ;; esac
+  # Prefer a freshly reported epoch; otherwise keep the cached one alive.
+  rl_5h_reset="${rl_5h_reset:-$cached_5h_reset}"
+  rl_7d_reset="${rl_7d_reset:-$cached_7d_reset}"
+
+  if [ "${rl_5h_int:-0}" -gt 0 ] 2>/dev/null || [ "${rl_7d_int:-0}" -gt 0 ] 2>/dev/null; then
+    printf '%s %s %s %s' "$rl_5h_int" "$rl_7d_int" "${rl_5h_reset:-0}" "${rl_7d_reset:-0}" > "$rl_cache"
+  else
+    # JSON omitted rate_limits this render: recover gauge percentages from cache.
+    rl_5h="$cached_5h"; rl_7d="$cached_7d"
+    rl_5h_int="${cached_5h:-0}"; rl_7d_int="${cached_7d:-0}"
+  fi
+
+  # Time readouts: session elapsed (counts up, ⧗) and reset countdowns (count down, ⟲).
+  # Each is empty unless its source is present and meaningful — a lapsed/absent value shows
+  # no suffix. The duration needs no cache: total_duration_ms rides every render.
+  c_dur=''; s_reset=''; w_reset=''
+  case "$dur_ms" in (''|*[!0-9]*) ;; (*)
+    dur_s=$(( dur_ms / 1000 )); [ "$dur_s" -gt 0 ] && c_dur=$(humanize_secs "$dur_s") ;;
+  esac
+  now=$(date +%s)
+  case "$rl_5h_reset" in (''|*[!0-9]*) ;; (*)
+    rem=$(( rl_5h_reset - now )); [ "$rem" -gt 0 ] && s_reset=$(humanize_secs "$rem") ;;
+  esac
+  case "$rl_7d_reset" in (''|*[!0-9]*) ;; (*)
+    rem=$(( rl_7d_reset - now )); [ "$rem" -gt 0 ] && w_reset=$(humanize_secs "$rem") ;;
+  esac
+
+  user=$(whoami); host=$(hostname -s)
 fi
-[ -z "$effort" ] && effort="auto"
-
-rl_5h_int=$(printf '%.0f' "${rl_5h:-0}" 2>/dev/null)
-rl_7d_int=$(printf '%.0f' "${rl_7d:-0}" 2>/dev/null)
-# Sanitise reset epochs to digits-only: a non-epoch shape (ISO string / milliseconds) is
-# treated as absent so a schema surprise renders nothing rather than garbage.
-case "$rl_5h_reset" in (''|*[!0-9]*) rl_5h_reset='' ;; esac
-case "$rl_7d_reset" in (''|*[!0-9]*) rl_7d_reset='' ;; esac
-
-# Rate-limit cache line: "5h% 7d% 5h_epoch 7d_epoch" (epochs added this version; an older
-# 2-field line reads back with empty epochs — forward/backward safe). A "0" placeholder
-# keeps all four fields positional so an absent middle epoch can't shift the read. Recover
-# the cache first so absent fields fall back to it: gauges AND reset countdowns stay live
-# across renders where the JSON omits rate_limits, mirroring the percentage persistence.
-rl_cache="$cache_dir/claude-ratelimits.cache"
-cached_5h=''; cached_7d=''; cached_5h_reset=''; cached_7d_reset=''
-[ -f "$rl_cache" ] && read -r cached_5h cached_7d cached_5h_reset cached_7d_reset < "$rl_cache"
-case "$cached_5h_reset" in (*[!0-9]*) cached_5h_reset='' ;; esac
-case "$cached_7d_reset" in (*[!0-9]*) cached_7d_reset='' ;; esac
-# Prefer a freshly reported epoch; otherwise keep the cached one alive.
-rl_5h_reset="${rl_5h_reset:-$cached_5h_reset}"
-rl_7d_reset="${rl_7d_reset:-$cached_7d_reset}"
-
-if [ "${rl_5h_int:-0}" -gt 0 ] 2>/dev/null || [ "${rl_7d_int:-0}" -gt 0 ] 2>/dev/null; then
-  printf '%s %s %s %s' "$rl_5h_int" "$rl_7d_int" "${rl_5h_reset:-0}" "${rl_7d_reset:-0}" > "$rl_cache"
-else
-  # JSON omitted rate_limits this render: recover gauge percentages from cache.
-  rl_5h="$cached_5h"; rl_7d="$cached_7d"
-  rl_5h_int="${cached_5h:-0}"; rl_7d_int="${cached_7d:-0}"
-fi
-
-# Time readouts: session elapsed (counts up, ⧗) and reset countdowns (count down, ⟲).
-# Each is empty unless its source is present and meaningful — a lapsed/absent value shows
-# no suffix. The duration needs no cache: total_duration_ms rides every render.
-c_dur=''; s_reset=''; w_reset=''
-case "$dur_ms" in (''|*[!0-9]*) ;; (*)
-  dur_s=$(( dur_ms / 1000 )); [ "$dur_s" -gt 0 ] && c_dur=$(humanize_secs "$dur_s") ;;
-esac
-now=$(date +%s)
-case "$rl_5h_reset" in (''|*[!0-9]*) ;; (*)
-  rem=$(( rl_5h_reset - now )); [ "$rem" -gt 0 ] && s_reset=$(humanize_secs "$rem") ;;
-esac
-case "$rl_7d_reset" in (''|*[!0-9]*) ;; (*)
-  rem=$(( rl_7d_reset - now )); [ "$rem" -gt 0 ] && w_reset=$(humanize_secs "$rem") ;;
-esac
-
-user=$(whoami); host=$(hostname -s)
 
 short_cwd="${cwd/#$HOME/~}"
 if [ "${#short_cwd}" -gt 30 ]; then
@@ -159,34 +176,52 @@ first_real() {
     done
 }
 
-task=""
-if [ -n "$transcript" ] && [ -f "$transcript" ]; then
-  key=$(printf '%s' "$transcript" | { md5 -q 2>/dev/null || md5sum | cut -d' ' -f1; })
-  tcache="$cache_dir/claude-task-$key.txt"
-  if [ -f "$tcache" ]; then task=$(cat "$tcache")
-  else
-    raw=$(head -n 500 "$transcript" 2>/dev/null | grep '"type":"user"' | first_real)
-    if [ -n "$raw" ]; then
-      task=$(printf '%s' "$raw" | cut -c1-40); [ "${#raw}" -gt 40 ] && task="${task}…"
-      printf '%s' "$task" > "$tcache"
+# Transcript reads (task + latest) are the script's heaviest per-render cost. Lean shows
+# neither, so gate BOTH behind enriched — lean never opens the transcript.
+task=""; latest=""
+if [ "$mode" = "enriched" ]; then
+  if [ -n "$transcript" ] && [ -f "$transcript" ]; then
+    key=$(printf '%s' "$transcript" | { md5 -q 2>/dev/null || md5sum | cut -d' ' -f1; })
+    tcache="$cache_dir/claude-task-$key.txt"
+    if [ -f "$tcache" ]; then task=$(cat "$tcache")
+    else
+      raw=$(head -n 500 "$transcript" 2>/dev/null | grep '"type":"user"' | first_real)
+      if [ -n "$raw" ]; then
+        task=$(printf '%s' "$raw" | cut -c1-40); [ "${#raw}" -gt 40 ] && task="${task}…"
+        printf '%s' "$task" > "$tcache"
+      fi
     fi
+  fi
+
+  if [ -n "$transcript" ] && [ -f "$transcript" ] && [ -n "$task" ]; then
+    key=$(printf '%s' "$transcript" | { md5 -q 2>/dev/null || md5sum | cut -d' ' -f1; })
+    lcache="$cache_dir/claude-latest-$key.txt"; lmtime=$(stat -f %m "$lcache" 2>/dev/null || echo 0)
+    if [ -f "$lcache" ] && [ $(( $(date +%s) - lmtime )) -lt 3 ]; then
+      latest=$(cat "$lcache")
+    else
+      raw=$(tail -n 500 "$transcript" 2>/dev/null | tail -r | grep '"type":"user"' | first_real)
+      if [ -n "$raw" ]; then
+        latest=$(printf '%s' "$raw" | cut -c1-40); [ "${#raw}" -gt 40 ] && latest="${latest}…"
+      fi
+      printf '%s' "$latest" > "$lcache"
+    fi
+    [ "$latest" = "$task" ] && latest=""
   fi
 fi
 
-latest=""
-if [ -n "$transcript" ] && [ -f "$transcript" ] && [ -n "$task" ]; then
-  key=$(printf '%s' "$transcript" | { md5 -q 2>/dev/null || md5sum | cut -d' ' -f1; })
-  lcache="$cache_dir/claude-latest-$key.txt"; lmtime=$(stat -f %m "$lcache" 2>/dev/null || echo 0)
-  if [ -f "$lcache" ] && [ $(( $(date +%s) - lmtime )) -lt 3 ]; then
-    latest=$(cat "$lcache")
-  else
-    raw=$(tail -n 500 "$transcript" 2>/dev/null | tail -r | grep '"type":"user"' | first_real)
-    if [ -n "$raw" ]; then
-      latest=$(printf '%s' "$raw" | cut -c1-40); [ "${#raw}" -gt 40 ] && latest="${latest}…"
-    fi
-    printf '%s' "$latest" > "$lcache"
+# Final render branches on mode. Lean: one line of cwd, branch/worktree, model, and the
+# c: gauge (when present) — mirroring the enriched c: printf exactly — then one newline.
+if [ "$mode" = "lean" ]; then
+  printf "\033[34m%s\033[0m" "$short_cwd"
+  [ -n "$branch" ] && [ -z "$short_worktree" ] && printf "  \033[33m[%s]\033[0m" "$branch"
+  [ -n "$short_worktree" ] && printf "  \033[33mwt:%s\033[0m" "$short_worktree"
+  printf "  \033[36m%s\033[0m" "$model"
+  if [ -n "$used" ]; then
+    used_int=$(printf '%.0f' "$used" 2>/dev/null)
+    printf "  \033[%smc:%s%%\033[0m" "$(gauge_sgr "$used_int" 25:'38;5;178' 50:'38;5;208' 75:'1;38;5;196')" "$used_int"
   fi
-  [ "$latest" = "$task" ] && latest=""
+  printf "\n"
+  exit 0
 fi
 
 printf "\033[32m%s@%s\033[0m  \033[34m%s\033[0m" "$user" "$host" "$short_cwd"
