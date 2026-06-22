@@ -316,7 +316,7 @@ case_h() {
   chmod +x "$shim"
 
   # --- lean, no transcript ---
-  : > "$counter"
+  printf '' > "$counter"
   home=$(fresh_home); repo=$(make_repo main)
   printf 'STATUSLINE_MODE=lean\n' > "$home/.claude/statusline.conf"
   stdin=$(ST_CWD="$repo" ST_MODEL="Opus 4.8" ST_USED="42" mk_stdin)
@@ -324,7 +324,7 @@ case_h() {
   lean_count=$(wc -c < "$counter" | tr -d ' ')
 
   # --- enriched, no transcript ---
-  : > "$counter"
+  printf '' > "$counter"
   home2=$(fresh_home); repo2=$(make_repo main)
   printf 'STATUSLINE_MODE=enriched\n' > "$home2/.claude/statusline.conf"
   stdin2=$(ST_CWD="$repo2" ST_MODEL="Opus 4.8" ST_USED="42" \
@@ -372,11 +372,8 @@ toggle_write() {
   _conf="$1"; _mode="$2"
   mkdir -p "$(dirname "$_conf")"
   _tmp="$_conf.tmp.$$"
-  if [ -f "$_conf" ]; then
-    grep -v '^STATUSLINE_MODE=' "$_conf" > "$_tmp" 2>/dev/null || : > "$_tmp"
-  else
-    : > "$_tmp"
-  fi
+  printf '' > "$_tmp"   # empty temp; avoid ": >" (shell-guard, a sibling plugin, blocks that idiom)
+  [ -f "$_conf" ] && grep -v '^STATUSLINE_MODE=' "$_conf" >> "$_tmp" 2>/dev/null
   printf 'STATUSLINE_MODE=%s\n' "$_mode" >> "$_tmp"
   mv "$_tmp" "$_conf"
 }
@@ -418,6 +415,20 @@ case_j() {
   fi
 }
 
+# ===========================================================================
+# Case (k) — regression: the shipped /statusline-toggle recipe must avoid the
+# ": >" truncate idiom, which shell-guard (a sibling cc-goodies plugin) HARD-BLOCKS,
+# so running the command under shell-guard would fail. Lint the command doc.
+# ===========================================================================
+case_k() {
+  doc="$here/../commands/statusline-toggle.md"
+  if [ -f "$doc" ] && grep -qE '(^|[;&|{(])[[:space:]]*:[[:space:]]*>' "$doc"; then
+    bad "k/toggle-doc-shell-guard-safe" "statusline-toggle.md uses a ': >' redirect shell-guard blocks"
+  else
+    ok "k/toggle-doc-shell-guard-safe (no ': >' idiom in the toggle recipe)"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 case_a
 case_b
@@ -429,6 +440,7 @@ case_g
 case_h
 case_i
 case_j
+case_k
 
 echo "-----"
 echo "statusline mode-toggle: $pass/$total passed, $fail failed."

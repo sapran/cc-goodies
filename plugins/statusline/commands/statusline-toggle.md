@@ -34,7 +34,8 @@ The argument to this command (if any) is `$ARGUMENTS`.
    test -L "$conf" && { printf 'refusing: %s is a symlink\n' "$conf" >&2; exit 1; }
    mkdir -p "$HOME/.claude"
    tmp="$conf.tmp.$$"
-   { test -f "$conf" && grep -v '^STATUSLINE_MODE=' "$conf" > "$tmp" 2>/dev/null; } || : > "$tmp"
+   printf '' > "$tmp"   # empty temp file (a bare colon-redirect truncate would trip shell-guard)
+   test -f "$conf" && grep -v '^STATUSLINE_MODE=' "$conf" >> "$tmp" 2>/dev/null
    printf 'STATUSLINE_MODE=%s\n' "<TARGET>" >> "$tmp"
    mv "$tmp" "$conf"
    ```
