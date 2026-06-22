@@ -12,6 +12,31 @@ Opus 4.8 (xhigh)  c:42% ⧗1h23m  s:18% ⟲2h45m  w:5% ⟲3d4h
 
 Tuned for speed: a single `jq` parse, bounded transcript reads, and short-lived caches for the git branch and "latest message" lookups.
 
+## Modes
+
+The statusline renders in one of two modes, switchable while Claude Code is running:
+
+- **`enriched`** (the default) — the full two-line output shown above. Unchanged.
+- **`lean`** — a single compact line: compressed cwd, git branch (or `wt:` worktree token), model display name, and the `c:` context gauge.
+
+```text
+~/cab/claude.ai  [main]  Opus 4.8  c:42%
+```
+
+Lean keeps where you are, the branch/worktree, the model, and how full the context window is — the `c:` gauge keeps its value-driven severity colour. It **drops** the `user@host` segment, the `task → latest` prompt snippet, the `(effort)` suffix, the `s:` (5-hour) and `w:` (7-day) rate-limit gauges, and every `⧗` elapsed and `⟲` reset time suffix. Lean is also genuinely lighter, not just visually trimmed: it skips the work behind the dropped segments — both transcript reads, the rate-limit gauge/reset bookkeeping, the duration humanising, and the effort-from-settings fallback — so it does strictly less I/O per render than enriched.
+
+### Toggling the mode
+
+```text
+/statusline-toggle          # flip enriched ⇄ lean
+/statusline-toggle lean     # set lean explicitly
+/statusline-toggle enriched # set enriched explicitly
+```
+
+A bare `/statusline-toggle` flips the current mode; an optional `enriched`/`lean` argument sets one explicitly. The change applies on the **next render** — no restart, no re-install — and the command reports the resulting mode.
+
+The mode is persisted as a `STATUSLINE_MODE=enriched|lean` line in `~/.claude/statusline.conf`, which the statusline **re-reads on every render** (that is how a flip reaches the already-running session). The conf is *read, never `source`d*, so a stray line in it can't execute. Any value outside `{enriched, lean}` — or an absent key or file — fails soft to `enriched`, which is why an install with no conf renders exactly as before. `/statusline-toggle` creates the conf lazily on first use; `/statusline-install` is unchanged and writes no conf.
+
 ## Install
 
 ```text
@@ -39,4 +64,4 @@ Run `/hooks` or restart for it to take effect.
 /plugin uninstall statusline@cc-goodies
 ```
 
-`/statusline-uninstall` only undoes what `/statusline-install` added — it **refuses to touch a statusline you configured yourself**. (To revert by hand instead: remove the `statusLine` key from `~/.claude/settings.json` and delete `~/.claude/team-statusline.sh`.)
+`/statusline-uninstall` only undoes what `/statusline-install` added — it **refuses to touch a statusline you configured yourself** — and also removes `~/.claude/statusline.conf` (the mode-toggle state `/statusline-toggle` creates), no-op-clean when that conf is absent. (To revert by hand instead: remove the `statusLine` key from `~/.claude/settings.json`, delete `~/.claude/team-statusline.sh`, and delete `~/.claude/statusline.conf`.)
