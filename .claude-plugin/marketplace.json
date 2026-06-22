@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Developer-experience extras for Claude Code: spoken notifications, an enriched statusline, a protected-branch guard, a dangerous-command guard, an RTK token-optimizer hook, an end-of-session finaliser, a per-project tool scoper, and a Codex-MCP web-research helper.",
-    "version": "0.7.0",
+    "version": "0.7.1",
     "repository": "https://github.com/sapran/cc-goodies"
   },
   "plugins": [

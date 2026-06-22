@@ -7,6 +7,19 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-06-22
+
+### Fixed
+
+- **`/statusline-toggle` no longer trips `shell-guard`** (plugin `0.5.0` → `0.5.1`). The
+  command's documented write recipe seeded its temp file with the `: >` truncate-to-empty
+  idiom, which the sibling `shell-guard` plugin hard-blocks — so on a setup running both
+  plugins, invoking `/statusline-toggle` failed at the guard before writing the mode. The
+  recipe now seeds the temp file with `printf '' >` and appends the preserved lines; the
+  atomic same-directory `mv` is unchanged, so the result is identical. The statusline test
+  harness gains a regression case that lints the command doc for the blocked idiom. No change
+  to the statusline script or to the toggle's behaviour.
+
 ## [0.7.0] - 2026-06-22
 
 ### Added
