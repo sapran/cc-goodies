@@ -7,6 +7,25 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-06-24
+
+### Fixed
+
+- **`git-guard` now resolves config-routed and multi-refspec push targets** (plugin `0.2.2` →
+  `0.2.3`). A destination-less push (`git push` / `git push <remote>`) whose target git would
+  route onto a protected branch via configuration was previously judged only by the literal
+  refspec text, falling back to the current branch name — so a push that `push.default=upstream`
+  (with the branch's upstream `branch.<b>.merge` pointing at `main`) or a `remote.<remote>.push`
+  refspec sends to `main` slipped through with no `:main` anywhere in the command. The guard now
+  reads that routing from git config — not `<src>@{push}`, which needs a materialised
+  remote-tracking ref and fails (with localised errors) on the exact unfetched case being closed —
+  so resolution holds before any fetch. Every positional refspec is now judged rather than only the
+  last, so `git push origin main develop` is blocked on `main`. `push.default=simple` with a
+  mismatched upstream is intentionally not blocked (git refuses that push itself), and any routing
+  the guard cannot resolve fails open; `push.default=matching` and exotic multi-remote routing
+  remain out of scope (documented in the plugin README). Adds a config-driven test runner
+  (`tests/run-routing.sh`, 8 cases) plus multi-refspec and bare-push rows in `cases.tsv`.
+
 ## [0.7.1] - 2026-06-22
 
 ### Fixed
