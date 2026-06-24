@@ -33,5 +33,5 @@
 
 - [x] 5.1 Updated `plugins/git-guard/README.md`: "What it catches" gains config-routed + multi-refspec bullets; "Limitations" notes `matching`/exotic routing still falls open
 - [x] 5.2 Updated `docs/shell-safety.md` push row (each refspec + config-routed target); root `README.md` git-guard row verified still accurate (unchanged)
-- [ ] 5.3 `CHANGELOG.md` entry under git-guard — RELEASE STEP (bundled into the `chore(release)` bump commit)
-- [ ] 5.4 Release per [[cc-goodies-release-flow]] — USER-GATED: `fix:` bump `plugins/git-guard/.claude-plugin/plugin.json` (`0.2.2`→`0.2.3`) + marketplace `metadata.version` (`0.7.1`→`0.7.2`), archive commit + tag on develop; hand the user the `!`-line to FF main
+- [x] 5.3 `CHANGELOG.md` entry under git-guard — landed in `chore(release)` commit `5fd963e` (`## [0.7.2] - 2026-06-24`)
+- [x] 5.4 Release per [[cc-goodies-release-flow]]: `fix:` bump git-guard `0.2.2`→`0.2.3` + marketplace `0.7.1`→`0.7.2` (`5fd963e`); archive commit + annotated `v0.7.2` tag on develop; `main` FF handed to user as a `!`-line
