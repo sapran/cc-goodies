@@ -25,6 +25,7 @@ push-all	feature	2	git push --all
 push-mirror	feature	2	git push --mirror
 push-bare-on-main	main	2	git push
 push-head-on-main	main	2	git push origin HEAD
+push-multi-includes-main	feature	2	git push origin main develop
 #
 # --- BLOCK: branch force ops onto a protected branch ------------------------
 branch-D-main	feature	2	git branch -D main
@@ -52,6 +53,8 @@ commit-on-develop	develop	0	git commit -m x
 push-develop	develop	0	git push origin develop
 push-feature	feature	0	git push origin feature/x
 push-feature-main-menu	feature	0	git push origin feature/main-menu
+push-multi-all-safe	feature	0	git push origin develop feature/x
+push-bare-no-upstream	feature	0	git push
 #
 # --- ALLOW: read-only / non-mutating on protected branch --------------------
 reset-unstage-on-main	main	0	git reset HEAD~1 -- file.txt

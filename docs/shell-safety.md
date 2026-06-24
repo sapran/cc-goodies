@@ -118,9 +118,10 @@ land on a protected branch.
 
 - **Guarded verbs:** `commit`, `merge`, `pull`, `rebase`, `cherry-pick`, `revert`, `am`,
   and a history-moving `reset --hard|--merge|--keep` (judged against the **current**
-  branch); `branch -D|-f|-M` (judged against the **named** branch); and `push` (judged
-  against the resolved target refspec, including the `+force` shorthand, `HEAD`, and a
-  `:branch` delete).
+  branch); `branch -D|-f|-M` (judged against the **named** branch); and `push` (each
+  refspec's resolved target, including the `+force` shorthand, `HEAD`, and a `:branch`
+  delete — and, for a destination-less push, the target git's config routes it to:
+  `push.default=upstream` and `remote.<remote>.push`).
 - **Behaviour:** by default, block a local write while on a protected branch and any push
   whose target is protected; `GIT_GUARD_BLOCK_ALL_PUSH=1` additionally blocks **every**
   push (for a strictly local-only workflow). The protected-branch list

@@ -97,6 +97,20 @@ current_branch() {
   fi
 }
 
+# Extract the destination branch NAME from one push refspec token:
+#   src:dst -> dst ; :dst (delete) -> dst ; +x -> x ; <name> (same-name) -> name ;
+#   HEAD -> current branch. Surrounding quotes and a refs/heads/ prefix are stripped.
+refspec_dst() {
+  rs="${1//\"/}"; rs="${rs//\'/}"; rs="${rs#+}"
+  case "$rs" in
+    *:*) d="${rs##*:}" ;;
+    *)   d="$rs" ;;
+  esac
+  d="${d#refs/heads/}"
+  [ "$d" = "HEAD" ] && d="$(current_branch "$2")"
+  printf '%s' "$d"
+}
+
 deny() {
   # $1 = human reason. Always hand the blocked command back as a copy-paste
   # `!`-prefixed line: typed into the Claude Code prompt, the `!` prefix runs it
@@ -181,32 +195,79 @@ evaluate_segment() {
   # Resolve the target branch and apply the single policy.
   if [ "$action" = "push" ]; then
     [ -n "${BLOCK_ALL_PUSH:-}" ] && [ "$BLOCK_ALL_PUSH" != "0" ] && { deny "push (GIT_GUARD_BLOCK_ALL_PUSH is set)"; return 2; }
-    pushall=0; last=""
+    gdir="${cdir:-$cwd}"
+
+    # Collect positionals (the remote and/or refspecs); skip flags and the flags
+    # that take a value token so the value isn't mistaken for a refspec.
+    pushall=0; positionals=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --all|--mirror) pushall=1 ;;
         -o|--push-option|--receive-pack|--exec|--repo)
-          [ $# -gt 1 ] && shift ;;   # these flags take a value token — skip it so
-                                     # it isn't mistaken for the remote/refspec
+          [ $# -gt 1 ] && shift ;;   # value token — skip
         -*) ;;                       # other flags don't name a branch
-        *)  last="$1" ;;             # remember the last positional (the refspec)
+        *)  positionals="$positionals $1" ;;
       esac
       shift
     done
-    if [ "$pushall" = "1" ]; then
-      deny "push --all/--mirror (touches protected branches)"; return 2
+    [ "$pushall" = "1" ] && { deny "push --all/--mirror (touches protected branches)"; return 2; }
+
+    # `git push [<remote>] [<refspec>...]`. Drop a leading positional that is a
+    # CONFIGURED remote; whatever remains are explicit refspecs.
+    # shellcheck disable=SC2086
+    set -- $positionals
+    remote=""
+    if [ $# -gt 0 ]; then
+      rname="${1//\"/}"; rname="${rname//\'/}"
+      if git -C "$gdir" config --get "remote.$rname.url" >/dev/null 2>&1; then
+        remote="$rname"; shift
+      fi
     fi
-    target="$last"
-    target="${target//\"/}"; target="${target//\'/}"   # de-quote refspec (`"main"` -> main)
-    case "$target" in *:*) target="${target##*:}" ;; esac  # src:dst (incl. :dst delete) -> dst
-    target="${target#+}"             # force-push shorthand: +main -> main
-    target="${target#refs/heads/}"
-    case "$target" in
-      ""|HEAD) br="$(current_branch "${cdir:-$cwd}")"   # `git push`, `git push <remote>`, HEAD
-               [ -n "$br" ] || return 0 ;;              # not a repo -> git will fail
-      *)       br="$target" ;;
+
+    if [ $# -gt 0 ]; then
+      # Explicit refspec(s) override push.default: judge EVERY one, not just the last.
+      for rs in "$@"; do
+        br="$(refspec_dst "$rs" "$gdir")"
+        is_main "$br" && { deny "push to protected branch '$br'"; return 2; }
+      done
+      return 0
+    fi
+
+    # Destination-less push (`git push`, `git push <remote>`): git resolves the
+    # target from config, not from the command text — resolve it the same way.
+    src="$(current_branch "$gdir")"
+    [ -n "$src" ] || return 0          # not a repo -> git will fail anyway
+
+    # Same-name routing (push.default simple/current/matching/nothing/unset): the
+    # target shares the source name, so a bare push while ON a protected branch
+    # lands on it. (push.default=simple with a different-named upstream makes git
+    # REFUSE the push, so it never reaches a protected branch — no block needed.)
+    is_main "$src" && { deny "push to protected branch '$src'"; return 2; }
+
+    # push.default=upstream|tracking routes to the configured upstream branch,
+    # whose name may DIFFER from the source — the silent develop->main case. Read
+    # it from config (not `@{push}`, which needs a materialised remote-tracking ref).
+    pd="$(git -C "$gdir" config push.default 2>/dev/null)"
+    case "$pd" in
+      upstream|tracking)
+        up="$(git -C "$gdir" config "branch.$src.merge" 2>/dev/null)"; up="${up#refs/heads/}"
+        [ -n "$up" ] && is_main "$up" && { deny "push routed by push.default=upstream to protected branch '$up'"; return 2; }
+        ;;
     esac
-    is_main "$br" && { deny "push to protected branch '$br'"; return 2; }
+
+    # A configured remote.<remote>.push refspec applies even to a bare push.
+    [ -n "$remote" ] || remote="$(git -C "$gdir" config "branch.$src.pushRemote" 2>/dev/null)"
+    [ -n "$remote" ] || remote="$(git -C "$gdir" config remote.pushDefault 2>/dev/null)"
+    [ -n "$remote" ] || remote="$(git -C "$gdir" config "branch.$src.remote" 2>/dev/null)"
+    [ -n "$remote" ] || remote="origin"
+    # Refspecs carry no spaces; word-splitting the config values is safe and keeps
+    # the loop in THIS shell (a `... | while read` subshell could not deny).
+    # shellcheck disable=SC2046
+    for spec in $(git -C "$gdir" config --get-all "remote.$remote.push" 2>/dev/null); do
+      br="$(refspec_dst "$spec" "$gdir")"
+      is_main "$br" && { deny "push routed by remote.$remote.push to protected branch '$br'"; return 2; }
+    done
+    return 0
   elif [ -n "$xtarget" ]; then
     br="$xtarget"                                        # branch -f|-D|-M|-C named it
     is_main "$br" && { deny "$verb on protected branch '$br'"; return 2; }

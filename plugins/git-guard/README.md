@@ -102,6 +102,15 @@ Target branches are resolved properly, not by substring matching:
   `git push origin HEAD:refs/heads/main`, the force shorthand `git push origin +main`,
   the quoted `git push origin "main"`, and `git push origin HEAD` (current branch)
   → all resolve to `main`.
+- **Config-routed pushes with no `main` in the command.** A destination-less `git push`
+  / `git push origin` that git would route onto a protected branch is resolved from
+  configuration, not the command text: `push.default=upstream` (or `tracking`) with the
+  current branch's upstream (`branch.<b>.merge`) pointing at `main`, and a
+  `remote.<remote>.push` refspec whose destination is `main`. Read from config, so it
+  holds before any fetch. (`push.default=simple` with a mismatched upstream is **not**
+  blocked — git refuses that push itself.)
+- **Every refspec in a multi-refspec push** is judged, not just the last — so
+  `git push origin main develop` is blocked on `main`.
 - Common non-evasive wrappers are unwrapped to reach the real `git` —
   `timeout 60 git push …`, `nice git push …`, `sudo git push …`, `env … git push …`,
   plus `rtk proxy git push …` (and `rtk git push …`) — so the wrapped command is still
@@ -139,6 +148,11 @@ Target branches are resolved properly, not by substring matching:
   Plan mode is the backstop for intent; this is a convenience guard, not a server-side
   branch protection. Pair it with real protections (GitHub branch rules) for anything
   that matters.
+- **Exotic push routing may still slip.** Config-routed pushes are resolved for the common
+  vectors (`push.default=upstream`/`tracking` and `remote.<remote>.push`), but
+  `push.default=matching` (which pushes every same-name branch pair) and unusual
+  multi-remote/refspec combinations are not enumerated. Routing the guard cannot resolve
+  fails open (allows), consistent with its convenience-not-sandbox stance.
 - **Requires `jq`** to parse the hook input. If `jq` is missing the guard prints a
   one-line warning and **allows** the command (it fails open rather than blocking
   every Bash call). `brew install jq` to enable it.
