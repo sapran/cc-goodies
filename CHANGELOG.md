@@ -7,6 +7,26 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-30
+
+### Added
+
+- **`statusline` renders the `caveman` plugin's mode badge** (plugin `0.5.1` → `0.6.0`). Claude
+  Code allows only one `statusLine` command, so the [`caveman`](https://github.com/sapran/caveman)
+  plugin's own statusline badge and this one previously competed for the single slot — pick this
+  statusline and you lost the `[CAVEMAN]` indicator. The enriched second line now ends with the
+  caveman badge (and its optional `~NN% saved` suffix) whenever caveman mode is active —
+  e.g. `Opus 4.8 (high)  c:42% s:10% w:5%  [CAVEMAN] ~38% saved`. The badge is read-only against
+  the caveman plugin's existing state files (`.caveman-active`, `.caveman-statusline-suffix`) under
+  `${CLAUDE_CONFIG_DIR:-~/.claude}`, adds **no `jq` parse**, and applies the same hardening the
+  caveman script does (symlink refusal, 64-byte read cap, lower-case + `[a-z0-9-]` strip, control-byte
+  strip, mode whitelist) so a planted state file can't inject terminal escapes. It renders only in
+  `enriched` mode — `lean` stays byte-identical — and is **fail-soft**: when caveman is not installed
+  (the flag file is absent) the statusline renders exactly as before, with no badge and no error.
+  Opt out with `STATUSLINE_CAVEMAN=0` (whole segment) or `CAVEMAN_STATUSLINE_SAVINGS=0` (savings only,
+  reusing the caveman plugin's own knob). Adds 8 harness cases covering render, hardening, savings,
+  opt-out, fail-soft, lean-exclusion, and a whitelist pin.
+
 ## [0.7.2] - 2026-06-24
 
 ### Fixed
