@@ -37,6 +37,32 @@ A bare `/statusline-toggle` flips the current mode; an optional `enriched`/`lean
 
 The mode is persisted as a `STATUSLINE_MODE=enriched|lean` line in `~/.claude/statusline.conf`, which the statusline **re-reads on every render** (that is how a flip reaches the already-running session). The conf is *read, never `source`d*, so a stray line in it can't execute. Any value outside `{enriched, lean}` — or an absent key or file — fails soft to `enriched`, which is why an install with no conf renders exactly as before. `/statusline-toggle` creates the conf lazily on first use; `/statusline-install` is unchanged and writes no conf.
 
+## Caveman badge
+
+Claude Code allows only one `statusLine` command, so this statusline and the separate [`caveman`](https://github.com/sapran/caveman) plugin — which ships its own statusline badge — would otherwise compete for the single slot. To let both coexist under one command, the enriched second line ends with the caveman badge whenever caveman mode is active:
+
+```text
+Opus 4.8 (high)  c:42% s:10% w:5%  [CAVEMAN] ~38% saved
+```
+
+- The badge reads the caveman plugin's existing state files under `${CLAUDE_CONFIG_DIR:-~/.claude}` — `.caveman-active` (the mode flag) and `.caveman-statusline-suffix` (the pre-rendered token-savings string). It is **read-only** against them: it never invokes the caveman plugin, runs `node`, or shells out, and it adds no `jq` parse.
+- The label tracks the mode: `[CAVEMAN]` in full mode, `[CAVEMAN:LITE]` / `[CAVEMAN:ULTRA]` / … for the others.
+- It renders only in **`enriched`** mode (the default). `lean` is the deliberately minimal mode and stays byte-identical — it never shows the badge.
+- **Fail-soft:** when `.caveman-active` is absent — the common case, since `caveman` is a separate plugin this marketplace neither bundles nor requires — the statusline renders exactly as it did before this feature, with no badge and no error.
+
+**Hardening.** The badge files are echoed to the terminal on every render, so the statusline applies the same defenses the caveman script applies: it refuses a symlinked flag or suffix file, caps each read at 64 bytes, lower-cases and strips the flag to `[a-z0-9-]`, strips control bytes from the suffix, and validates the mode against a fixed whitelist — anything unrecognised renders **no badge** rather than echoing the file's bytes. This neutralises terminal-escape injection via a planted state file.
+
+**Opt-out** (no uninstall needed):
+
+```text
+STATUSLINE_CAVEMAN=0          # suppress the whole caveman segment (badge + savings)
+CAVEMAN_STATUSLINE_SAVINGS=0  # keep the badge, drop only the savings suffix
+```
+
+`CAVEMAN_STATUSLINE_SAVINGS` is the caveman plugin's own knob, reused here so an existing setting carries over.
+
+> **Cross-plugin coupling.** This is a soft, one-directional read of two caveman files by their conventional path and value whitelist. If the caveman plugin renames those files or its mode set, the badge silently stops rendering (fail-soft) until this statusline's whitelist is updated — it never breaks the rest of the bar.
+
 ## Install
 
 ```text
