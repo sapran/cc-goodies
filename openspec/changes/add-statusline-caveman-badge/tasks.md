@@ -32,4 +32,4 @@
 ## 5. Release
 
 - [x] 5.1 Minor-bump `plugins/statusline/.claude-plugin/plugin.json` (`0.5.1` → `0.6.0`) and the marketplace `metadata.version` in `.claude-plugin/marketplace.json` (`0.7.2` → `0.8.0`), per the repo release flow.
-- [ ] 5.2 Commit as separate logical changes (feat: script + tests; docs; chore: version bump + CHANGELOG) on `develop`; leave the `develop` → `main` fast-forward to the user. **Awaiting user confirmation before committing.**
+- [x] 5.2 Committed as 4 logical commits (docs:proposal → feat:script+tests → docs:READMEs → chore:version bump+CHANGELOG) on branch `worktree-statusline-caveman-badge` (98f61f3, 5751cc5, fa1cbfc, a469721). Not pushed; `develop` merge and `develop` → `main` fast-forward left to the user.
