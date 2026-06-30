@@ -109,8 +109,12 @@ render() {
   _stdin="$1"; _home="$2"; _cwd="$3"
   _path="${SHIM_PATH:-}"
   if [ -n "$_path" ]; then _path="$_path:$PATH"; else _path="$PATH"; fi
+  # EXTRA_ENV (optional, e.g. "STATUSLINE_CAVEMAN=0") is spliced UNQUOTED into the
+  # clean env so a caller can set the caveman opt-out vars for a single render.
+  _extra="${EXTRA_ENV:-}"
+  # shellcheck disable=SC2086  # deliberate word-split of KEY=VAL tokens into env args
   OUT=$(cd "$_cwd" && printf '%s' "$_stdin" \
-        | env -i HOME="$_home" PATH="$_path" TMPDIR="$tmproot" LANG=C \
+        | env -i HOME="$_home" PATH="$_path" TMPDIR="$tmproot" LANG=C $_extra \
               bash "$script" 2>/dev/null)
   return $?
 }
@@ -429,6 +433,196 @@ case_k() {
   fi
 }
 
+# ===========================================================================
+# Caveman badge cases (OpenSpec change add-statusline-caveman-badge). The badge
+# is an enriched-ONLY segment at the END of L2, read from
+# $HOME/.claude/.caveman-active (+ optional .caveman-statusline-suffix) with the
+# caveman script's hardening: symlink refusal, 64-byte read cap, lower-case +
+# [a-z0-9-] strip, and a mode whitelist; fail-soft (no badge, no error) when the
+# flag is absent. No jq added. Opt out with STATUSLINE_CAVEMAN=0 (whole segment)
+# or CAVEMAN_STATUSLINE_SAVINGS=0 (savings suffix only). The badge files live in
+# the SAME fresh temp HOME the harness already controls per case.
+# ===========================================================================
+
+# Modes the script's whitelist must accept — pinned by case_s so a future caveman
+# mode rename surfaces here rather than silently dropping the badge.
+CAVEMAN_MODES="off lite full ultra wenyan-lite wenyan wenyan-full wenyan-ultra commit review compress"
+
+# Enriched stdin with all gauges present, reused across the badge cases so the
+# badge is always asserted to land AFTER the c:/s:/w: gauges on line 2.
+cm_stdin() {
+  ST_CWD="$1" ST_MODEL="Opus 4.8" ST_USED="42" ST_RL5H="30" ST_RL7D="20" \
+  ST_EFFORT="high" ST_DUR_MS="5000" mk_stdin
+}
+
+# ---- (l) task 2.1: badge renders at end of L2 — full and a named mode --------
+case_l() {
+  home=$(fresh_home); repo=$(make_repo main)
+  printf 'full' > "$home/.claude/.caveman-active"
+  render "$(cm_stdin "$repo")" "$home" "$repo"
+  full_ok=ok
+  [ "$(nlines "$OUT")" -eq 2 ] || full_ok=bad
+  printf '%s' "$OUT" | tail -1 | grep -qF '[CAVEMAN]' || full_ok=bad
+
+  printf 'ultra' > "$home/.claude/.caveman-active"
+  render "$(cm_stdin "$repo")" "$home" "$repo"
+  named_ok=ok
+  printf '%s' "$OUT" | tail -1 | grep -qF '[CAVEMAN:ULTRA]' || named_ok=bad
+
+  if [ "$full_ok" = ok ] && [ "$named_ok" = ok ]; then
+    ok "l/badge-enriched-L2 (full -> [CAVEMAN]; ultra -> [CAVEMAN:ULTRA], on line 2)"
+  else
+    bad "l/badge-enriched-L2" "full=$full_ok named=$named_ok"
+  fi
+}
+
+# ---- (m) task 2.2: hardening — symlink / escape-laden / oversized -> no badge -
+case_m() {
+  # symlink flag must not be read through
+  home=$(fresh_home); repo=$(make_repo main)
+  printf 'full' > "$home/.claude/secret"
+  ln -s "$home/.claude/secret" "$home/.claude/.caveman-active"
+  render "$(cm_stdin "$repo")" "$home" "$repo"
+  sym=ok; printf '%s' "$OUT" | grep -qF '[CAVEMAN' && sym=bad
+
+  # unrecognised, escape-laden value -> no badge AND no leaked bytes
+  home2=$(fresh_home); repo2=$(make_repo main)
+  printf '\033[31mHACK' > "$home2/.claude/.caveman-active"
+  render "$(cm_stdin "$repo2")" "$home2" "$repo2"
+  esc=ok
+  printf '%s' "$OUT" | grep -qF '[CAVEMAN' && esc=bad
+  printf '%s' "$OUT" | grep -qF 'HACK'     && esc=bad
+
+  # oversized junk (>64 bytes) -> capped read yields a non-whitelisted value
+  home3=$(fresh_home); repo3=$(make_repo main)
+  head -c 200 /dev/zero | tr '\0' 'a' > "$home3/.claude/.caveman-active"
+  render "$(cm_stdin "$repo3")" "$home3" "$repo3"
+  big=ok; printf '%s' "$OUT" | grep -qF '[CAVEMAN' && big=bad
+
+  if [ "$sym" = ok ] && [ "$esc" = ok ] && [ "$big" = ok ]; then
+    ok "m/badge-hardening (symlink/escape/oversized -> no badge, no leak)"
+  else
+    bad "m/badge-hardening" "symlink=$sym escape=$esc oversized=$big"
+  fi
+}
+
+# ---- (n) task 2.2: control bytes stripped while a valid mode is preserved -----
+case_n() {
+  home=$(fresh_home); repo=$(make_repo main)
+  printf '\001ULTRA\002' > "$home/.claude/.caveman-active"
+  render "$(cm_stdin "$repo")" "$home" "$repo"
+  c1=$(printf '\001'); c2=$(printf '\002')
+  res=ok
+  printf '%s' "$OUT" | tail -1 | grep -qF '[CAVEMAN:ULTRA]' || res=bad
+  printf '%s' "$OUT" | grep -qF "$c1" && res=bad
+  printf '%s' "$OUT" | grep -qF "$c2" && res=bad
+  if [ "$res" = ok ]; then
+    ok "n/control-stripped-valid ([CAVEMAN:ULTRA]; control bytes not leaked)"
+  else
+    bad "n/control-stripped-valid" "res=$res"
+  fi
+}
+
+# ---- (o) task 2.3: savings suffix present / absent / symlinked ----------------
+case_o() {
+  home=$(fresh_home); repo=$(make_repo main)
+  printf 'full' > "$home/.claude/.caveman-active"
+
+  printf '~38%% saved' > "$home/.claude/.caveman-statusline-suffix"
+  render "$(cm_stdin "$repo")" "$home" "$repo"
+  pres=ok
+  printf '%s' "$OUT" | grep -qF '[CAVEMAN]' || pres=bad
+  printf '%s' "$OUT" | grep -qF '~38% saved' || pres=bad
+
+  rm -f "$home/.claude/.caveman-statusline-suffix"
+  render "$(cm_stdin "$repo")" "$home" "$repo"
+  abs=ok
+  printf '%s' "$OUT" | grep -qF '[CAVEMAN]' || abs=bad
+  printf '%s' "$OUT" | grep -qF 'saved'     && abs=bad
+
+  printf 'LEAKSUFFIX' > "$home/.claude/realsuffix"
+  ln -s "$home/.claude/realsuffix" "$home/.claude/.caveman-statusline-suffix"
+  render "$(cm_stdin "$repo")" "$home" "$repo"
+  sym=ok
+  printf '%s' "$OUT" | grep -qF '[CAVEMAN]'  || sym=bad
+  printf '%s' "$OUT" | grep -qF 'LEAKSUFFIX' && sym=bad
+
+  if [ "$pres" = ok ] && [ "$abs" = ok ] && [ "$sym" = ok ]; then
+    ok "o/savings-suffix (present appended; absent badge-only; symlink omitted)"
+  else
+    bad "o/savings-suffix" "present=$pres absent=$abs symlink=$sym"
+  fi
+}
+
+# ---- (p) task 2.4: env opt-outs ----------------------------------------------
+case_p() {
+  home=$(fresh_home); repo=$(make_repo main)
+  printf 'full' > "$home/.claude/.caveman-active"
+  printf '~38%% saved' > "$home/.claude/.caveman-statusline-suffix"
+
+  EXTRA_ENV="STATUSLINE_CAVEMAN=0" render "$(cm_stdin "$repo")" "$home" "$repo"
+  seg=ok
+  printf '%s' "$OUT" | grep -qF '[CAVEMAN' && seg=bad
+  printf '%s' "$OUT" | grep -qF 'saved'    && seg=bad
+
+  EXTRA_ENV="CAVEMAN_STATUSLINE_SAVINGS=0" render "$(cm_stdin "$repo")" "$home" "$repo"
+  sav=ok
+  printf '%s' "$OUT" | grep -qF '[CAVEMAN]' || sav=bad
+  printf '%s' "$OUT" | grep -qF 'saved'     && sav=bad
+
+  if [ "$seg" = ok ] && [ "$sav" = ok ]; then
+    ok "p/env-opt-out (STATUSLINE_CAVEMAN=0 -> none; CAVEMAN_STATUSLINE_SAVINGS=0 -> badge only)"
+  else
+    bad "p/env-opt-out" "segment=$seg savings=$sav"
+  fi
+}
+
+# ---- (q) task 2.5: fail-soft — no flag is byte-identical to the opted-out path -
+case_q() {
+  home=$(fresh_home); repo=$(make_repo main)
+  render "$(cm_stdin "$repo")" "$home" "$repo"; out_noflag="$OUT"
+  noflag=ok
+  [ "$(nlines "$out_noflag")" -eq 2 ] || noflag=bad
+  printf '%s' "$out_noflag" | grep -qF '[CAVEMAN' && noflag=bad
+
+  printf 'full' > "$home/.claude/.caveman-active"
+  EXTRA_ENV="STATUSLINE_CAVEMAN=0" render "$(cm_stdin "$repo")" "$home" "$repo"; out_off="$OUT"
+
+  if [ "$noflag" = ok ] && [ "$out_noflag" = "$out_off" ]; then
+    ok "q/fail-soft-byte-identical (no flag: enriched, no badge; == opted-out render)"
+  else
+    bad "q/fail-soft-byte-identical" "noflag=$noflag identical=$([ "$out_noflag" = "$out_off" ] && echo yes || echo no)"
+  fi
+}
+
+# ---- (r) task 2.5: lean never shows the badge, even with an active flag -------
+case_r() {
+  home=$(fresh_home); repo=$(make_repo main)
+  printf 'STATUSLINE_MODE=lean\n' > "$home/.claude/statusline.conf"
+  printf 'full' > "$home/.claude/.caveman-active"
+  render "$(cm_stdin "$repo")" "$home" "$repo"
+  n=$(nlines "$OUT")
+  if [ "$n" -eq 1 ] && ! printf '%s' "$OUT" | grep -qF '[CAVEMAN'; then
+    ok "r/lean-no-badge (lean 1 line; no caveman badge despite active flag)"
+  else
+    bad "r/lean-no-badge" "lines=$n want=1; badge=$(printf '%s' "$OUT"|grep -qF '[CAVEMAN' && echo present || echo absent)"
+  fi
+}
+
+# ---- (s) task 2.6: the script's mode whitelist is pinned to CAVEMAN_MODES -----
+case_s() {
+  line=$(grep -E 'off\|lite\|full\|ultra\|wenyan' "$script" | head -1)
+  miss=""
+  for m in $CAVEMAN_MODES; do
+    case "$line" in (*"$m"*) ;; (*) miss="$miss $m" ;; esac
+  done
+  if [ -n "$line" ] && [ -z "$miss" ]; then
+    ok "s/whitelist-pinned (script accepts every caveman mode)"
+  else
+    bad "s/whitelist-pinned" "missing-from-script:{$miss}"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 case_a
 case_b
@@ -441,7 +635,15 @@ case_h
 case_i
 case_j
 case_k
+case_l
+case_m
+case_n
+case_o
+case_p
+case_q
+case_r
+case_s
 
 echo "-----"
-echo "statusline mode-toggle: $pass/$total passed, $fail failed."
+echo "statusline (mode-toggle + caveman-badge): $pass/$total passed, $fail failed."
 [ "$fail" -eq 0 ]

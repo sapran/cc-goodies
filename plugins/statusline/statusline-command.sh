@@ -76,6 +76,50 @@ gauge_sgr() {
   printf '%s' "$out"
 }
 
+# Caveman badge — render the caveman plugin's mode badge (and optional savings
+# suffix) as the LAST segment of the enriched second line, so this statusline and
+# the separate `caveman` plugin coexist under the single `statusLine` slot Claude
+# Code allows. Read-only against two caveman state files by their conventional
+# path under ${CLAUDE_CONFIG_DIR:-$HOME/.claude}; renders nothing — and never
+# errors — when the flag is absent, the common case since caveman is a separate,
+# non-bundled marketplace. The files are echoed to the terminal every render, so
+# apply the SAME hardening the caveman script applies: refuse symlinks, cap the
+# read, lower-case + strip the flag to [a-z0-9-], strip control bytes from the
+# suffix, and whitelist the mode before emitting a byte — an unrecognised value
+# renders no badge rather than echoing attacker-controlled bytes. No `jq` here:
+# plain-bash reads keep the one-jq-parse budget. Only reached in enriched mode —
+# the lean path exits before the call site — so lean stays byte-identical.
+# Opt out of the whole segment with STATUSLINE_CAVEMAN=0; opt out of just the
+# savings suffix with CAVEMAN_STATUSLINE_SAVINGS=0 (mirrors the caveman knob).
+caveman_badge() {
+  [ "${STATUSLINE_CAVEMAN:-1}" = "0" ] && return
+  local cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  local flag="$cfg/.caveman-active"
+  [ -L "$flag" ] && return
+  [ -f "$flag" ] || return
+  local mode
+  mode=$(head -c 64 "$flag" 2>/dev/null | tr -d '\n\r' | tr '[:upper:]' '[:lower:]')
+  mode=$(printf '%s' "$mode" | tr -cd 'a-z0-9-')
+  case "$mode" in
+    off|lite|full|ultra|wenyan-lite|wenyan|wenyan-full|wenyan-ultra|commit|review|compress) ;;
+    *) return ;;
+  esac
+  local badge
+  if [ -z "$mode" ] || [ "$mode" = "full" ]; then
+    badge='[CAVEMAN]'
+  else
+    badge="[CAVEMAN:$(printf '%s' "$mode" | tr '[:lower:]' '[:upper:]')]"
+  fi
+  printf '  \033[38;5;172m%s\033[0m' "$badge"
+  if [ "${CAVEMAN_STATUSLINE_SAVINGS:-1}" != "0" ]; then
+    local sfile="$cfg/.caveman-statusline-suffix" sav
+    if [ -f "$sfile" ] && [ ! -L "$sfile" ]; then
+      sav=$(head -c 64 "$sfile" 2>/dev/null | tr -d '\000-\037')
+      [ -n "$sav" ] && printf ' \033[38;5;172m%s\033[0m' "$sav"
+    fi
+  fi
+}
+
 # Enriched-only computations: effort fallback, rate-limit gauge/reset cache, and the
 # time-readout block. Lean shows none of their output, so none of the work runs — gate the
 # whole span behind `mode = enriched` so lean does strictly less I/O per render.
@@ -247,4 +291,5 @@ if [ -n "$rl_7d" ] && [ "${rl_7d_int:-0}" -gt 0 ] 2>/dev/null; then
   printf " \033[%smw:%s%%\033[0m" "$(gauge_sgr "$rl_7d_int" 50:'38;5;208' 75:'1;38;5;196')" "$rl_7d_int"
   [ -n "$w_reset" ] && printf " \033[38;5;243m⟲%s\033[0m" "$w_reset"
 fi
+caveman_badge
 printf "\n"
