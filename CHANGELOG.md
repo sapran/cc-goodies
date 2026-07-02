@@ -7,6 +7,29 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-02
+
+### Added
+
+- **`voice-notify` now voices the subagent-working pause distinctly from a real turn-end**
+  (plugin `0.3.0` → `0.4.0`). Previously only `Stop` ("your turn") and `Notification` had a
+  voice, so a turn that dispatched subagents and paused while they ran sounded no different from
+  one that had genuinely finished — a long silence, then eventually "your turn". A new
+  `PreToolUse` hook on the `Agent` (subagent-dispatch) tool now speaks a distinct *still-working*
+  cue (*"Spinning up some helpers, back in a bit."*) from its own phrase pool, routed through the
+  existing composer so it varies in wording and cadence like the other cues. Because a fan-out
+  fires the hook once per subagent, the cue is **debounced** to one per burst: the first fire
+  speaks and stamps an epoch to a single ephemeral per-session `$TMPDIR` file
+  (`vn-<session>.dispatch`), and further fires within `CLAUDE_VOICE_NOTIFY_SUBAGENT_DEBOUNCE`
+  seconds (default 10) stay silent. A subagent *finishing* is silent by design, and — verified
+  against Claude Code 2.1.197 with a logging hook — `Stop` fires only once at true turn-end
+  (never mid-pause), so "your turn" stays honest with no extra guard needed. Mute just this cue
+  with `CLAUDE_VOICE_NOTIFY_SUBAGENT=off`; the global mute (`CLAUDE_VOICE_NOTIFY=off`), the
+  non-macOS no-op, and the missing-`jq` fallback all apply to the new event as before, and the
+  marker is ephemeral `$TMPDIR` state so `/plugin uninstall` remains the full revert. Adds 13
+  test-harness cases (distinct pool, debounce collapse, speak-after-window, silent finish, both
+  mutes, non-macOS no-op).
+
 ## [0.8.0] - 2026-06-30
 
 ### Added
