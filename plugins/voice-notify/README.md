@@ -5,6 +5,7 @@ Spoken notifications for Claude Code on macOS. Claude tells you — in the first
 ## What you'll hear
 
 - **When Claude needs you** (`Notification` — a permission prompt, or waiting on input after going idle): the actual reason in the first person, routed by context — a brisk lead-in for permission prompts (*"Quick one — I need your permission to use Bash"*), a gentler one when it's just waiting (*"Whenever you're ready — I'm waiting for your input"*).
+- **When Claude hands work to subagents** (`PreToolUse` on the `Agent` tool — the main agent dispatches subagents and pauses while they run): a distinct *still-working* cue (*"Spinning up some helpers, back in a bit."*), so a subagent-working pause never sounds like a real turn-end. A burst of parallel dispatches is **debounced** to a single cue, and a subagent *finishing* is silent — you hear the hand-off once, then "your turn" only when the whole turn genuinely ends.
 - **When a long turn finishes** (`Stop`): a sign-off, e.g. *"All done."*, *"Your turn."*, *"That's a wrap."* — and for a turn you clearly waited on, one that acknowledges it (*"Okay, that took a bit, but it's done."*). **Quick turns stay silent** (see *Quiet on quick turns* below), so you only hear "done" for the work you stepped away from.
 
 Each cue is composed from small phrase pools and *sometimes* gets a lead-in (about 40% of the time, joined by a brief spoken pause) — so it varies in both wording and cadence and never settles into a formula.
@@ -30,6 +31,8 @@ Set these as environment variables (shell profile, or Claude Code's `env` settin
 | `CLAUDE_VOICE_NOTIFY=off` | Mute without uninstalling. |
 | `CLAUDE_VOICE_NOTIFY_QUIET_UNDER` | Seconds below which a finished turn is *not* announced (default `20`). Set `0` to speak after every turn (the pre-0.3.0 behaviour); raise it to only hear about genuinely long tasks. |
 | `CLAUDE_VOICE_NOTIFY_GARNISH_PCT` | Chance (0–100) that a cue gets a leading interjection (default `40`). `0` = always the bare phrase; `100` = always a lead-in. |
+| `CLAUDE_VOICE_NOTIFY_SUBAGENT=off` | Mute *only* the subagent hand-off cue, leaving the attention and turn-end cues. |
+| `CLAUDE_VOICE_NOTIFY_SUBAGENT_DEBOUNCE` | Seconds within which a burst of subagent dispatches collapses to one cue (default `10`). Raise it if a single task dispatches several waves and you only want one hand-off cue; lower it to hear each wave. |
 
 ### Pause / mute
 
@@ -52,6 +55,19 @@ outside it and the plugin's own directory, so `/plugin uninstall` remains a comp
 If the timing can't be determined (first turn, missing file), the cue is spoken rather than
 swallowed. To restore the old "speak after every turn" behaviour, set
 `CLAUDE_VOICE_NOTIFY_QUIET_UNDER=0`.
+
+### Subagent hand-off cue
+
+When the main agent dispatches subagents (the `Agent` tool) it pauses while they run — a
+different state from "finished, your turn". A `PreToolUse` hook on that tool speaks a distinct
+*still-working* cue so you can tell the two apart by ear. A fan-out fires the hook once per
+subagent, so the cue is **debounced**: the first fire speaks and records an epoch in a single
+per-session `$TMPDIR` file (`vn-<session>.dispatch`); further fires within
+`CLAUDE_VOICE_NOTIFY_SUBAGENT_DEBOUNCE` seconds (default 10) stay silent, so a parallel
+dispatch is one cue, not one per subagent. Subagents *finishing* are silent by design — you
+hear the hand-off, then the ordinary `Stop` sign-off when the turn truly ends. Mute just this
+cue with `CLAUDE_VOICE_NOTIFY_SUBAGENT=off`. The marker is ephemeral `$TMPDIR` state, like the
+turn timer, so `/plugin uninstall` remains a complete revert.
 
 ## Prerequisites
 
