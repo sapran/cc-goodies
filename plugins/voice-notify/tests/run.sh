@@ -47,11 +47,13 @@ SAY_LOG="$work/say.log"; export SAY_LOG   # the `say` stub (a grandchild) reads 
 PATH_USE="$bin_mac"
 now() { date +%s; }
 stamp() { echo "$1" > "$work/vn-sess.start"; }   # write a turn-start <epoch>
+dstamp() { echo "$1" > "$work/vn-sess.dispatch"; }  # write a last-dispatch-cue <epoch>
 J_PERM='{"message":"Claude needs your permission to use Bash","session_id":"sess"}'
 J_IDLE='{"message":"Claude is waiting for your input","session_id":"sess"}'
 J_WEIRD='{"message":"Claude Code is reticulating splines","session_id":"sess"}'
 J_EMPTY='{"session_id":"sess"}'
 J_SESS='{"session_id":"sess"}'
+J_DISPATCH='{"session_id":"sess","tool_name":"Task"}'
 
 # --- Notification: subtype routing + first-person + no mangling ---
 export CLAUDE_VOICE_NOTIFY_GARNISH_PCT=0   # core-only -> deterministic assertions
@@ -118,16 +120,67 @@ run start "$J_SESS"
 ts=$(cat "$work/vn-sess.start" 2>/dev/null)
 case "$ts" in ''|*[!0-9]*) no "start timestamp not numeric" "$ts";; *) ok "start timestamp is epoch seconds";; esac
 
+# --- Subagent dispatch cue: distinct pool, debounce, silent finishes ---
+export CLAUDE_VOICE_NOTIFY_GARNISH_PCT=0          # core-only -> deterministic membership
+export CLAUDE_VOICE_NOTIFY_SUBAGENT_DEBOUNCE=30
+rm -f "$work/vn-sess.dispatch"
+run dispatch "$J_DISPATCH"
+member_sub=0
+while IFS= read -r line; do [ "$spoke" = "$line" ] && member_sub=1; done <<'EOF'
+Spinning up some helpers, back in a bit.
+Working with a few helpers now.
+Handing some work off, give me a moment.
+Got some sub-agents on it, hang tight.
+Delegating this, back shortly.
+EOF
+[ "$member_sub" = 1 ] && ok "dispatch -> distinct subagent cue (not a sign-off)" || no "dispatch pool" "$spoke"
+# the same phrase must NOT be a turn-end sign-off (states stay audibly distinct)
+member_stop=0
+while IFS= read -r line; do [ "$spoke" = "$line" ] && member_stop=1; done <<'EOF'
+All done.
+Done.
+Finished.
+Ready when you are.
+Your turn.
+Back to you.
+That's a wrap.
+Over to you.
+Done and dusted.
+Wrapped up.
+EOF
+[ "$member_stop" = 0 ] && ok "dispatch cue is not in the Stop sign-off pool" || no "dispatch overlaps stop" "$spoke"
+[ -f "$work/vn-sess.dispatch" ] && ok "dispatch writes \$TMPDIR debounce marker" || no "no debounce marker" "missing"
+
+run dispatch "$J_DISPATCH"        # marker fresh -> same burst
+[ -z "$spoke" ] && ok "dispatch within window -> debounced silent" || no "debounce not silent" "$spoke"
+
+dstamp "$(( $(now) - 60 ))"       # marker older than the 30s window -> new burst
+run dispatch "$J_DISPATCH"
+[ -n "$spoke" ] && ok "dispatch after window -> speaks again" || no "post-window silent" "(nothing)"
+unset CLAUDE_VOICE_NOTIFY_SUBAGENT_DEBOUNCE
+
+run subagent-stop "$J_SESS"       # no finish arm -> any such event no-ops
+[ -z "$spoke" ] && ok "subagent finish -> silent (no finish cue)" || no "subagent finish spoke" "$spoke"
+
 # --- mute wins everywhere ---
 export CLAUDE_VOICE_NOTIFY=off
 run notification "$J_PERM"; [ -z "$spoke" ] && ok "mute -> notification silent" || no "mute notif" "$spoke"
 stamp "$(( $(now) - 300 ))"; run stop "$J_SESS"; [ -z "$spoke" ] && ok "mute -> stop silent" || no "mute stop" "$spoke"
+rm -f "$work/vn-sess.dispatch"; run dispatch "$J_DISPATCH"; [ -z "$spoke" ] && ok "mute -> dispatch silent" || no "mute dispatch" "$spoke"
 unset CLAUDE_VOICE_NOTIFY
+
+# --- subagent-only mute: gags the dispatch cue, leaves stop/notification speaking ---
+export CLAUDE_VOICE_NOTIFY_SUBAGENT=off
+rm -f "$work/vn-sess.dispatch"; run dispatch "$J_DISPATCH"; [ -z "$spoke" ] && ok "subagent mute -> dispatch silent" || no "subagent mute dispatch" "$spoke"
+stamp "$(( $(now) - 300 ))"; run stop "$J_SESS"; [ -n "$spoke" ] && ok "subagent mute -> stop still speaks" || no "subagent mute gagged stop" "(nothing)"
+unset CLAUDE_VOICE_NOTIFY_SUBAGENT
 
 # --- non-macOS (no `say`) -> clean no-op ---
 PATH_USE="$bin_nomac"
 run notification "$J_PERM"; rc=$?
 { [ -z "$spoke" ] && [ "$rc" = 0 ]; } && ok "no say -> silent, exit 0" || no "non-macos no-op" "rc=$rc spoke=$spoke"
+rm -f "$work/vn-sess.dispatch"; run dispatch "$J_DISPATCH"; rc=$?
+{ [ -z "$spoke" ] && [ "$rc" = 0 ]; } && ok "no say -> dispatch silent, exit 0" || no "non-macos dispatch no-op" "rc=$rc spoke=$spoke"
 PATH_USE="$bin_mac"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
