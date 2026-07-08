@@ -2,9 +2,11 @@
 # cc-goodies / voice-notify
 # Speak a short, rotating, first-person cue when Claude Code needs attention.
 #
-# Usage (from hooks):  notify.sh <event>   event = "stop" | "notification" | "start" | "dispatch"
-# The hook's JSON arrives on stdin: "notification" reads .message; "stop"/"start"/
-# "dispatch" read .session_id (to time the turn, and to debounce the dispatch cue).
+# Usage (from hooks):  notify.sh <event>
+#   event = "stop" | "notification" | "start" | "dispatch" | "subagent-stop"
+# The hook's JSON arrives on stdin: "notification" reads .message; "stop"/"start"/"dispatch"/
+# "subagent-stop" read .session_id (to time the turn, debounce the dispatch cue, and track
+# in-flight subagents); "subagent-stop" also reads .agent_id.
 #
 # Environment:
 #   CLAUDE_VOICE="Name"                 override the voice (default: "Matilda (Premium)")
@@ -12,8 +14,11 @@
 #   CLAUDE_VOICE_NOTIFY_QUIET_UNDER=N   skip the Stop cue when the turn ran < N seconds
 #                                       (default 20; set 0 to speak after every turn)
 #   CLAUDE_VOICE_NOTIFY_GARNISH_PCT=N   chance (0-100) of a leading interjection (default 40)
-#   CLAUDE_VOICE_NOTIFY_SUBAGENT=off    mute only the subagent dispatch cue
+#   CLAUDE_VOICE_NOTIFY_SUBAGENT=off    disable the whole subagent path (dispatch cue,
+#                                       in-flight tracking, and the waiting-at-turn-end cue)
 #   CLAUDE_VOICE_NOTIFY_SUBAGENT_DEBOUNCE=N  collapse a dispatch burst within N s (default 10)
+#   CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL=N  prune in-flight markers older than N s (default 3600),
+#                                       so a subagent that never reports done can't wedge count
 #
 # macOS only (uses `say`). No-ops cleanly anywhere `say` is absent.
 
@@ -36,6 +41,8 @@ garnish_pct="${CLAUDE_VOICE_NOTIFY_GARNISH_PCT:-40}"
 case "$garnish_pct" in ''|*[!0-9]*) garnish_pct=40 ;; esac
 debounce="${CLAUDE_VOICE_NOTIFY_SUBAGENT_DEBOUNCE:-10}"
 case "$debounce" in ''|*[!0-9]*) debounce=10 ;; esac
+ttl="${CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL:-3600}"
+case "$ttl" in ''|*[!0-9]*) ttl=3600 ;; esac
 
 # --- voice resolution, done lazily so "start" never pays for `say -v '?'` ---
 voice_resolved=""
@@ -125,6 +132,16 @@ Handing some work off, give me a moment.
 Got some sub-agents on it, hang tight.
 Delegating this, back shortly."
 
+# Waiting cue: the turn ended but background subagents are still running, so a turn-end
+# sign-off would be a false "finished". Distinct from the dispatch pool (which announces the
+# hand-off) and the sign-off pools — this marks a turn boundary with work still outstanding.
+WAITING_CORES="Still going, the helpers aren't done yet.
+Not done yet, the agents are still working.
+Paused here, but the sub-agents are still running.
+Holding for the helpers to finish.
+Agents still busy, not your turn just yet.
+Work's still out with the helpers."
+
 # --- duration state (ephemeral, $TMPDIR only; OS clears it, /plugin uninstall is enough) ---
 session_id() {
   command -v jq >/dev/null 2>&1 || return 0
@@ -133,6 +150,52 @@ session_id() {
 }
 state_file() { printf '%s/vn-%s.start' "${TMPDIR:-/tmp}" "$1"; }
 dispatch_file() { printf '%s/vn-%s.dispatch' "${TMPDIR:-/tmp}" "$1"; }
+
+# --- in-flight subagent accounting (two create-only marker dirs per session) ---
+# Spawn markers (one per dispatch, uniquely named) and done markers (one per completion, named
+# by agent_id so a duplicate SubagentStop overwrites instead of double-counting). Each marker's
+# content is its creation epoch, so prune_dir can age out stale ones without stat(1). Writers
+# only ever create distinct paths, so concurrent async hooks never race a read-modify-write.
+spawn_dir() { printf '%s/vn-%s.spawn.d' "${TMPDIR:-/tmp}" "$1"; }
+done_dir()  { printf '%s/vn-%s.done.d'  "${TMPDIR:-/tmp}" "$1"; }
+
+# Read .agent_id, sanitised so it is safe as a filename. Empty without jq or the field.
+agent_id() {
+  command -v jq >/dev/null 2>&1 || return 0
+  printf '%s' "$input" | jq -r '.agent_id // ""' 2>/dev/null \
+    | tr -cd 'A-Za-z0-9._-'
+}
+
+# mark <dir> <name>: create/overwrite a marker whose content is the current epoch.
+mark() {
+  mkdir -p "$1" 2>/dev/null || return 0
+  printf '%s' "$(date +%s)" > "$1/$2" 2>/dev/null
+}
+
+# count_dir <dir>: number of marker files, via globbing only (no ls/find needed off-PATH).
+count_dir() {
+  local d="$1" n=0 f
+  [ -d "$d" ] || { printf 0; return; }
+  for f in "$d"/*; do [ -e "$f" ] && n=$((n+1)); done
+  printf '%s' "$n"
+}
+
+# prune_dir <dir> <cutoff-epoch>: drop markers older than the cutoff (or with an empty content
+# from a failed write). Non-numeric content is kept — fail toward "still in-flight", never a
+# false all-clear that would let a premature sign-off through.
+prune_dir() {
+  local d="$1" cutoff="$2" f ts
+  [ -d "$d" ] || return 0
+  for f in "$d"/*; do
+    [ -e "$f" ] || continue
+    ts=$(cat "$f" 2>/dev/null)
+    case "$ts" in
+      '')       rm -f "$f" 2>/dev/null ;;
+      *[!0-9]*) : ;;
+      *)        [ "$ts" -lt "$cutoff" ] && rm -f "$f" 2>/dev/null ;;
+    esac
+  done
+}
 
 # Map a Notification message to (subtype, first-person reason). Allow-list only:
 # unrecognised wording falls through to a neutral cue rather than being mangled.
@@ -182,6 +245,24 @@ case "$event" in
       fi
     fi
 
+    # Subagents still running? The main turn ended but background agents keep working, so a
+    # sign-off would be a false "finished". Announce the waiting state instead — and, since a
+    # turn boundary with work outstanding is worth flagging even after a short turn, bypass the
+    # quiet-under gate. Foreground agents report every SubagentStop before Stop (spawn == done),
+    # so they resolve to zero in-flight and fall through to the normal sign-off.
+    if [ "${CLAUDE_VOICE_NOTIFY_SUBAGENT:-on}" != "off" ]; then
+      sub_sid="$sid"; [ -n "$sub_sid" ] || sub_sid="nosess"
+      cutoff=$(( $(date +%s) - ttl ))
+      prune_dir "$(spawn_dir "$sub_sid")" "$cutoff"
+      prune_dir "$(done_dir "$sub_sid")" "$cutoff"
+      inflight=$(( $(count_dir "$(spawn_dir "$sub_sid")") - $(count_dir "$(done_dir "$sub_sid")") ))
+      if [ "$inflight" -gt 0 ]; then
+        core=$(printf '%s\n' "$WAITING_CORES" | pick)
+        speak "$(compose "$NEUTRAL_GARNISH" "$core")"
+        exit 0
+      fi
+    fi
+
     # Quiet on quick turns: if it finished fast, the user is probably still here.
     if [ -n "$elapsed" ] && [ "$elapsed" -lt "$quiet_under" ]; then
       exit 0
@@ -220,6 +301,10 @@ case "$event" in
     sid=$(session_id)
     [ -n "$sid" ] || sid="nosess"
 
+    # Record this spawn for in-flight accounting BEFORE the debounce: every dispatched subagent
+    # must count, even when its cue is debounced into silence.
+    mark "$(spawn_dir "$sid")" "$(date +%s).$$.${RANDOM:-0}"
+
     df=$(dispatch_file "$sid")
     last=""
     [ -f "$df" ] && last=$(cat "$df" 2>/dev/null)
@@ -233,6 +318,20 @@ case "$event" in
 
     core=$(printf '%s\n' "$SUBAGENT_CORES" | pick)
     speak "$(compose "$NEUTRAL_GARNISH" "$core")"
+    ;;
+
+  subagent-stop)
+    # A subagent finished: record the completion so a later Stop can tell whether work is still
+    # outstanding. Speak nothing — per-completion cues would be chatter on a large fan-out.
+    [ "${CLAUDE_VOICE_NOTIFY_SUBAGENT:-on}" = "off" ] && exit 0
+    sid=$(session_id)
+    [ -n "$sid" ] || sid="nosess"
+    aid=$(agent_id)
+    # Key by agent_id so a duplicate SubagentStop overwrites (counts once); fall back to a
+    # unique name when the id is unavailable (jq missing) so the completion still registers.
+    [ -n "$aid" ] || aid="a$(date +%s).$$.${RANDOM:-0}"
+    mark "$(done_dir "$sid")" "$aid"
+    exit 0
     ;;
 
   *)

@@ -1,6 +1,6 @@
 {
   "name": "voice-notify",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Spoken macOS notifications when Claude needs your attention or finishes a turn.",
   "author": {
     "name": "Volodymyr Styran",
@@ -59,6 +59,20 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
             "args": ["dispatch"],
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
+            "args": ["subagent-stop"],
             "async": true,
             "timeout": 5
           }
