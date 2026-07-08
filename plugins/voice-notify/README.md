@@ -5,8 +5,9 @@ Spoken notifications for Claude Code on macOS. Claude tells you — in the first
 ## What you'll hear
 
 - **When Claude needs you** (`Notification` — a permission prompt, or waiting on input after going idle): the actual reason in the first person, routed by context — a brisk lead-in for permission prompts (*"Quick one — I need your permission to use Bash"*), a gentler one when it's just waiting (*"Whenever you're ready — I'm waiting for your input"*).
-- **When Claude hands work to subagents** (`PreToolUse` on the `Agent` tool — the main agent dispatches subagents and pauses while they run): a distinct *still-working* cue (*"Spinning up some helpers, back in a bit."*), so a subagent-working pause never sounds like a real turn-end. A burst of parallel dispatches is **debounced** to a single cue, and a subagent *finishing* is silent — you hear the hand-off once, then "your turn" only when the whole turn genuinely ends.
-- **When a long turn finishes** (`Stop`): a sign-off, e.g. *"All done."*, *"Your turn."*, *"That's a wrap."* — and for a turn you clearly waited on, one that acknowledges it (*"Okay, that took a bit, but it's done."*). **Quick turns stay silent** (see *Quiet on quick turns* below), so you only hear "done" for the work you stepped away from.
+- **When Claude hands work to subagents** (`PreToolUse` on the `Agent` tool — the main agent dispatches subagents and pauses while they run): a distinct *still-working* cue (*"Spinning up some helpers, back in a bit."*), so a subagent-working pause never sounds like a real turn-end. A burst of parallel dispatches is **debounced** to a single cue, and a subagent *finishing* is silent — you hear the hand-off once, then a sign-off only when the turn genuinely ends with nothing still running.
+- **When the turn ends but agents are still running** (`Stop` with **background** subagents in flight): a distinct *waiting* cue (*"Still going, the helpers aren't done yet."*) instead of a turn-end sign-off — so a main session that goes idle while its background subagents keep working never says "All done" prematurely. voice-notify counts dispatches (`Agent`) against completions (`SubagentStop`); the real sign-off waits until nothing is in flight. (Blocking/foreground subagents finish before the turn ends, so they never trigger it.)
+- **When a long turn finishes** (`Stop`, nothing in flight): a sign-off, e.g. *"All done."*, *"Your turn."*, *"That's a wrap."* — and for a turn you clearly waited on, one that acknowledges it (*"Okay, that took a bit, but it's done."*). **Quick turns stay silent** (see *Quiet on quick turns* below), so you only hear "done" for the work you stepped away from.
 
 Each cue is composed from small phrase pools and *sometimes* gets a lead-in (about 40% of the time, joined by a brief spoken pause) — so it varies in both wording and cadence and never settles into a formula.
 
@@ -31,8 +32,9 @@ Set these as environment variables (shell profile, or Claude Code's `env` settin
 | `CLAUDE_VOICE_NOTIFY=off` | Mute without uninstalling. |
 | `CLAUDE_VOICE_NOTIFY_QUIET_UNDER` | Seconds below which a finished turn is *not* announced (default `20`). Set `0` to speak after every turn (the pre-0.3.0 behaviour); raise it to only hear about genuinely long tasks. |
 | `CLAUDE_VOICE_NOTIFY_GARNISH_PCT` | Chance (0–100) that a cue gets a leading interjection (default `40`). `0` = always the bare phrase; `100` = always a lead-in. |
-| `CLAUDE_VOICE_NOTIFY_SUBAGENT=off` | Mute *only* the subagent hand-off cue, leaving the attention and turn-end cues. |
+| `CLAUDE_VOICE_NOTIFY_SUBAGENT=off` | Disable the whole subagent path — the hand-off cue, the in-flight tracking, **and** the waiting cue — leaving the attention and turn-end cues. With it off, `Stop` signs off exactly as it did before in-flight tracking existed. |
 | `CLAUDE_VOICE_NOTIFY_SUBAGENT_DEBOUNCE` | Seconds within which a burst of subagent dispatches collapses to one cue (default `10`). Raise it if a single task dispatches several waves and you only want one hand-off cue; lower it to hear each wave. |
+| `CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL` | Seconds after which an in-flight subagent marker is treated as stale and pruned (default `3600`), so a subagent that never reports completion (a crash, or a denied dispatch) can't wedge the count into a permanent *waiting* state. |
 
 ### Pause / mute
 
@@ -64,10 +66,30 @@ different state from "finished, your turn". A `PreToolUse` hook on that tool spe
 subagent, so the cue is **debounced**: the first fire speaks and records an epoch in a single
 per-session `$TMPDIR` file (`vn-<session>.dispatch`); further fires within
 `CLAUDE_VOICE_NOTIFY_SUBAGENT_DEBOUNCE` seconds (default 10) stay silent, so a parallel
-dispatch is one cue, not one per subagent. Subagents *finishing* are silent by design — you
-hear the hand-off, then the ordinary `Stop` sign-off when the turn truly ends. Mute just this
-cue with `CLAUDE_VOICE_NOTIFY_SUBAGENT=off`. The marker is ephemeral `$TMPDIR` state, like the
-turn timer, so `/plugin uninstall` remains a complete revert.
+dispatch is one cue, not one per subagent. Mute just this cue (and the waiting cue below) with
+`CLAUDE_VOICE_NOTIFY_SUBAGENT=off`. The marker is ephemeral `$TMPDIR` state, like the turn
+timer, so `/plugin uninstall` remains a complete revert.
+
+### Waiting-on-subagents cue
+
+With **background** subagents, the main turn can end while they keep running: Claude Code fires
+`Stop` without waiting for them (a `SubagentStop` fires later, per agent, when each finishes).
+Left alone, `Stop` would speak a turn-end sign-off — a false "All done" for work still in
+progress. To catch this, voice-notify keeps a per-session, ephemeral count of *in-flight*
+subagents: the dispatch hook records each `Agent` spawn, a new `SubagentStop` hook records each
+completion (keyed by the event's `agent_id`, so a duplicate stop counts once), and at `Stop`
+the plugin compares the two. If any subagents are still in flight it speaks a distinct
+**waiting** cue (*"Not done yet, the agents are still working."*) instead of the sign-off —
+regardless of the quiet-on-quick-turns gate, since a turn boundary with work outstanding is
+worth flagging. When nothing is in flight (including every ordinary turn, and any turn whose
+subagents were blocking/foreground and so finished first), `Stop` behaves exactly as before.
+
+The count lives in two create-only marker directories under `$TMPDIR` (one for spawns, one for
+completions), so concurrent asynchronous hooks never race. A subagent that never reports
+completion — a crash, or a dispatch you denied — would otherwise leave the count stuck, so at
+each `Stop` markers older than `CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL` seconds (default `3600`) are
+pruned. Nothing is written outside `$TMPDIR` and the plugin's own directory, so `/plugin
+uninstall` remains a complete revert.
 
 ## Prerequisites
 
