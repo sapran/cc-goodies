@@ -54,7 +54,7 @@ suppressed so a large fan-out does not become chatter.
 - **WHEN** `SubagentStop` is observed more than once for the same `agent_id`
 - **THEN** the accounting records that agent as finished exactly once (idempotent)
 
-### Requirement: Ephemeral, self-cleaning debounce and in-flight state
+### Requirement: Ephemeral, self-cleaning debounce and active-subagent state
 
 State used to debounce dispatch cues or to track in-flight subagents SHALL be ephemeral
 per-session state under the system temp directory, written create-only or overwritten within
