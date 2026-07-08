@@ -16,7 +16,7 @@ trap 'rm -rf "$work"' EXIT
 # Isolated tool dirs: one that looks like macOS (has `say`), one that doesn't.
 bin_mac="$work/bin-mac"; bin_nomac="$work/bin-nomac"
 mkdir -p "$bin_mac" "$bin_nomac"
-for t in bash jq awk date grep tr cat rm sed mktemp; do
+for t in bash jq awk date grep tr cat rm sed mktemp mkdir; do
   p=$(command -v "$t" 2>/dev/null) || continue
   ln -sf "$p" "$bin_mac/$t"; ln -sf "$p" "$bin_nomac/$t"
 done
@@ -48,12 +48,20 @@ PATH_USE="$bin_mac"
 now() { date +%s; }
 stamp() { echo "$1" > "$work/vn-sess.start"; }   # write a turn-start <epoch>
 dstamp() { echo "$1" > "$work/vn-sess.dispatch"; }  # write a last-dispatch-cue <epoch>
+# In-flight marker helpers (mirror the script's spawn.d/done.d dirs under $TMPDIR=$work).
+count_files() { local n=0 f; for f in "$1"/*; do [ -e "$f" ] && n=$((n+1)); done; printf '%s' "$n"; }
+spawn_reset() { rm -rf "$work/vn-sess.spawn.d" "$work/vn-sess.done.d"; }
+spawn_add() { mkdir -p "$work/vn-sess.spawn.d"; printf '%s' "${1:-$(now)}" > "$work/vn-sess.spawn.d/m$RANDOM$RANDOM"; }
+done_add() { mkdir -p "$work/vn-sess.done.d"; printf '%s' "${1:-$(now)}" > "$work/vn-sess.done.d/${2:-a$RANDOM}"; }
+spawn_n() { count_files "$work/vn-sess.spawn.d"; }
+done_n()  { count_files "$work/vn-sess.done.d"; }
 J_PERM='{"message":"Claude needs your permission to use Bash","session_id":"sess"}'
 J_IDLE='{"message":"Claude is waiting for your input","session_id":"sess"}'
 J_WEIRD='{"message":"Claude Code is reticulating splines","session_id":"sess"}'
 J_EMPTY='{"session_id":"sess"}'
 J_SESS='{"session_id":"sess"}'
 J_DISPATCH='{"session_id":"sess","tool_name":"Task"}'
+J_SUBSTOP='{"session_id":"sess","agent_id":"agent-abc-123"}'
 
 # --- Notification: subtype routing + first-person + no mangling ---
 export CLAUDE_VOICE_NOTIFY_GARNISH_PCT=0   # core-only -> deterministic assertions
@@ -159,20 +167,118 @@ run dispatch "$J_DISPATCH"
 [ -n "$spoke" ] && ok "dispatch after window -> speaks again" || no "post-window silent" "(nothing)"
 unset CLAUDE_VOICE_NOTIFY_SUBAGENT_DEBOUNCE
 
-run subagent-stop "$J_SESS"       # no finish arm -> any such event no-ops
-[ -z "$spoke" ] && ok "subagent finish -> silent (no finish cue)" || no "subagent finish spoke" "$spoke"
+# --- Subagent finish: silent, but records a done marker (idempotent per agent_id) ---
+spawn_reset
+run subagent-stop "$J_SUBSTOP"
+[ -z "$spoke" ] && ok "subagent finish -> silent (no completion cue)" || no "subagent finish spoke" "$spoke"
+[ "$(done_n)" = 1 ] && ok "subagent finish -> writes a done marker" || no "no done marker" "$(done_n)"
+run subagent-stop "$J_SUBSTOP"        # same agent_id -> must not double-count
+[ "$(done_n)" = 1 ] && ok "duplicate SubagentStop for same agent_id counts once" || no "dup counted" "$(done_n)"
+
+# --- In-flight at Stop: waiting cue in place of a sign-off ---
+export CLAUDE_VOICE_NOTIFY_QUIET_UNDER=20
+spawn_reset
+rm -f "$work/vn-sess.dispatch"
+run dispatch "$J_DISPATCH"            # dispatch also records a spawn marker
+[ "$(spawn_n)" = 1 ] && ok "dispatch -> writes a spawn marker" || no "no spawn marker" "$(spawn_n)"
+WAIT_POOL='Still going, the helpers aren'\''t done yet.
+Not done yet, the agents are still working.
+Paused here, but the sub-agents are still running.
+Holding for the helpers to finish.
+Agents still busy, not your turn just yet.
+Work'\''s still out with the helpers.'
+stamp "$(( $(now) - 30 ))"           # long enough that a no-work turn would sign off
+run stop "$J_SESS"
+member_wait=0
+while IFS= read -r line; do [ "$spoke" = "$line" ] && member_wait=1; done <<EOF
+$WAIT_POOL
+EOF
+[ "$member_wait" = 1 ] && ok "stop with subagent in-flight -> waiting cue" || no "waiting cue" "$spoke"
+# waiting cue must not collide with the sign-off pools or the dispatch pool
+member_notwait=0
+while IFS= read -r line; do [ "$spoke" = "$line" ] && member_notwait=1; done <<'EOF'
+All done.
+Done.
+Finished.
+Ready when you are.
+Your turn.
+Back to you.
+That's a wrap.
+Over to you.
+Done and dusted.
+Wrapped up.
+Spinning up some helpers, back in a bit.
+Working with a few helpers now.
+Handing some work off, give me a moment.
+Got some sub-agents on it, hang tight.
+Delegating this, back shortly.
+EOF
+[ "$member_notwait" = 0 ] && ok "waiting cue is distinct from sign-off/dispatch pools" || no "waiting overlaps" "$spoke"
+
+stamp "$(( $(now) - 3 ))"             # quick turn, but work still outstanding
+run stop "$J_SESS"
+[ -n "$spoke" ] && ok "waiting cue bypasses the quiet-under gate" || no "waiting gated by quiet" "(silent)"
+
+done_add "$(now)" "agent-abc-123"    # completion balances the spawn -> normal sign-off
+stamp "$(( $(now) - 30 ))"
+run stop "$J_SESS"
+member_bal=0
+while IFS= read -r line; do [ "$spoke" = "$line" ] && member_bal=1; done <<'EOF'
+All done.
+Done.
+Finished.
+Ready when you are.
+Your turn.
+Back to you.
+That's a wrap.
+Over to you.
+Done and dusted.
+Wrapped up.
+EOF
+[ "$member_bal" = 1 ] && ok "spawn balanced by completion -> normal sign-off (no regression)" || no "balanced not sign-off" "$spoke"
+
+spawn_reset                          # stale spawn marker (older than the 3600s TTL) is pruned
+spawn_add "$(( $(now) - 7200 ))"
+stamp "$(( $(now) - 30 ))"
+run stop "$J_SESS"
+member_stale=0
+while IFS= read -r line; do [ "$spoke" = "$line" ] && member_stale=1; done <<'EOF'
+All done.
+Done.
+Finished.
+Ready when you are.
+Your turn.
+Back to you.
+That's a wrap.
+Over to you.
+Done and dusted.
+Wrapped up.
+EOF
+[ "$member_stale" = 1 ] && ok "stale spawn marker pruned -> normal sign-off" || no "stale not pruned" "$spoke"
+[ "$(spawn_n)" = 0 ] && ok "stale spawn marker removed from dir" || no "stale marker remains" "$(spawn_n)"
+spawn_reset
+unset CLAUDE_VOICE_NOTIFY_QUIET_UNDER
 
 # --- mute wins everywhere ---
 export CLAUDE_VOICE_NOTIFY=off
 run notification "$J_PERM"; [ -z "$spoke" ] && ok "mute -> notification silent" || no "mute notif" "$spoke"
 stamp "$(( $(now) - 300 ))"; run stop "$J_SESS"; [ -z "$spoke" ] && ok "mute -> stop silent" || no "mute stop" "$spoke"
 rm -f "$work/vn-sess.dispatch"; run dispatch "$J_DISPATCH"; [ -z "$spoke" ] && ok "mute -> dispatch silent" || no "mute dispatch" "$spoke"
+spawn_reset; run subagent-stop "$J_SUBSTOP"; { [ -z "$spoke" ] && [ "$(done_n)" = 0 ]; } && ok "mute -> subagent-stop silent, no marker" || no "mute subagent-stop" "spoke=$spoke done=$(done_n)"
 unset CLAUDE_VOICE_NOTIFY
 
-# --- subagent-only mute: gags the dispatch cue, leaves stop/notification speaking ---
+# --- subagent-only mute: disables the whole subagent path, leaves stop/notification speaking ---
 export CLAUDE_VOICE_NOTIFY_SUBAGENT=off
-rm -f "$work/vn-sess.dispatch"; run dispatch "$J_DISPATCH"; [ -z "$spoke" ] && ok "subagent mute -> dispatch silent" || no "subagent mute dispatch" "$spoke"
-stamp "$(( $(now) - 300 ))"; run stop "$J_SESS"; [ -n "$spoke" ] && ok "subagent mute -> stop still speaks" || no "subagent mute gagged stop" "(nothing)"
+spawn_reset
+rm -f "$work/vn-sess.dispatch"; run dispatch "$J_DISPATCH"
+[ -z "$spoke" ] && ok "subagent mute -> dispatch silent" || no "subagent mute dispatch" "$spoke"
+[ "$(spawn_n)" = 0 ] && ok "subagent mute -> no spawn marker written" || no "muted spawn written" "$(spawn_n)"
+run subagent-stop "$J_SUBSTOP"
+[ "$(done_n)" = 0 ] && ok "subagent mute -> no done marker written" || no "muted done written" "$(done_n)"
+spawn_add "$(now)"                    # even with an in-flight marker present...
+stamp "$(( $(now) - 300 ))"; run stop "$J_SESS"
+[ -n "$spoke" ] && ok "subagent mute -> stop signs off despite in-flight marker" || no "subagent mute gagged stop" "(nothing)"
+spawn_reset
 unset CLAUDE_VOICE_NOTIFY_SUBAGENT
 
 # --- non-macOS (no `say`) -> clean no-op ---
@@ -181,6 +287,8 @@ run notification "$J_PERM"; rc=$?
 { [ -z "$spoke" ] && [ "$rc" = 0 ]; } && ok "no say -> silent, exit 0" || no "non-macos no-op" "rc=$rc spoke=$spoke"
 rm -f "$work/vn-sess.dispatch"; run dispatch "$J_DISPATCH"; rc=$?
 { [ -z "$spoke" ] && [ "$rc" = 0 ]; } && ok "no say -> dispatch silent, exit 0" || no "non-macos dispatch no-op" "rc=$rc spoke=$spoke"
+spawn_reset; run subagent-stop "$J_SUBSTOP"; rc=$?
+{ [ "$(done_n)" = 0 ] && [ "$rc" = 0 ]; } && ok "no say -> subagent-stop no-op, exit 0" || no "non-macos subagent-stop no-op" "rc=$rc done=$(done_n)"
 PATH_USE="$bin_mac"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
