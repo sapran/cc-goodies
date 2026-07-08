@@ -42,7 +42,9 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   before, and every marker is ephemeral `$TMPDIR` state so `/plugin uninstall` remains the full
   revert. Adds test-harness cases for the spawn/done accounting, the waiting cue (distinct from
   the sign-off and dispatch pools), the quiet-gate bypass, the foreground-balances-to-sign-off
-  no-regression path, the TTL prune, and mute/no-op coverage for the new event (25 → 38).
+  no-regression path, the TTL prune (including a custom TTL and a base-10 parse guard so a
+  leading-zero `CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL` can't turn the arithmetic octal, error under
+  `set -u`, and silence `Stop`), and mute/no-op coverage for the new event (25 → 40).
 
 ## [0.9.0] - 2026-07-02
 

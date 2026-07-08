@@ -256,6 +256,30 @@ Wrapped up.
 EOF
 [ "$member_stale" = 1 ] && ok "stale spawn marker pruned -> normal sign-off" || no "stale not pruned" "$spoke"
 [ "$(spawn_n)" = 0 ] && ok "stale spawn marker removed from dir" || no "stale marker remains" "$(spawn_n)"
+
+# a custom TTL is honoured: a marker older than the configured window is pruned -> sign-off
+export CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL=60
+spawn_reset
+spawn_add "$(( $(now) - 120 ))"      # 2min old, older than the 60s TTL
+stamp "$(( $(now) - 30 ))"
+run stop "$J_SESS"
+[ "$(spawn_n)" = 0 ] && ok "custom TTL prunes an older marker" || no "custom TTL not applied" "$(spawn_n)"
+unset CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL
+
+# a leading-zero TTL must NOT be parsed as octal: $(( ... - ttl )) would error, leave cutoff
+# unset, and under set -u kill the whole stop arm (silencing every turn). Guard: base-10 forced.
+export CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL=0900
+spawn_reset
+spawn_add "$(now)"                   # fresh marker -> in-flight
+stamp "$(( $(now) - 30 ))"
+run stop "$J_SESS"; rc=$?
+member_lz=0
+while IFS= read -r line; do [ "$spoke" = "$line" ] && member_lz=1; done <<EOF
+$WAIT_POOL
+EOF
+{ [ "$rc" = 0 ] && [ "$member_lz" = 1 ]; } && ok "leading-zero TTL -> no crash, speaks waiting cue" || no "leading-zero TTL crashed stop arm" "rc=$rc spoke=$spoke"
+unset CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL
+
 spawn_reset
 unset CLAUDE_VOICE_NOTIFY_QUIET_UNDER
 
