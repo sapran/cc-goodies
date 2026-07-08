@@ -7,6 +7,43 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-08
+
+### Added
+
+- **`voice-notify` now speaks a distinct *waiting* cue when a turn ends while background
+  subagents are still running** (plugin `0.4.0` → `0.5.0`). The `0.9.0` change reserved the
+  `Stop` "your turn" sign-off for true turn-end but added no guard, because its spike found
+  `Stop` fires only after every `SubagentStop`. That holds for **blocking/foreground**
+  subagents; it does **not** hold for **background** subagents, where the `Agent` tool
+  dispatches agents that run without blocking and the main turn can end while they keep
+  working (Claude Code fires `Stop` without waiting; a `SubagentStop` fires later per agent).
+  The symptom: the main session goes idle and can accept input while its background agents are
+  still running, and `Stop` speaks a false "All done." Now the plugin keeps a per-session,
+  ephemeral count of in-flight subagents — the existing `PreToolUse(Agent)` dispatch hook
+  records each spawn, and a new `SubagentStop` hook records each completion keyed by the
+  event's `agent_id` (so a duplicate stop counts once) — and at `Stop` compares the two. If
+  any subagents are still in flight it speaks a distinct waiting cue (*"Not done yet, the
+  agents are still working."*) from its own phrase pool, **bypassing** the quiet-on-quick-turns
+  gate, instead of the turn-end sign-off. When nothing is in flight — every ordinary turn, and
+  any turn whose subagents were foreground and so finished first (spawn count equals completion
+  count) — `Stop` behaves exactly as before, so there is no regression on the common path.
+- The count lives in two **create-only** marker directories under `$TMPDIR`
+  (`vn-<session>.spawn.d` and `vn-<session>.done.d`), so concurrent asynchronous hooks only
+  ever create distinct paths and never race a read-modify-write on a shared counter. Each
+  marker stores its creation epoch; at every `Stop`, markers older than the new
+  `CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL` (seconds, default `3600`) are pruned, so a subagent that
+  never reports completion — a crash, or a dispatch you denied — cannot wedge the count into a
+  permanent *waiting* state.
+- The existing `CLAUDE_VOICE_NOTIFY_SUBAGENT=off` now disables the whole subagent path — the
+  dispatch cue, the in-flight tracking, **and** the waiting cue — so `Stop` signs off exactly
+  as it did before in-flight tracking existed. The global mute (`CLAUDE_VOICE_NOTIFY=off`), the
+  non-macOS no-op, and the missing-`jq` fallback all apply to the new `SubagentStop` event as
+  before, and every marker is ephemeral `$TMPDIR` state so `/plugin uninstall` remains the full
+  revert. Adds test-harness cases for the spawn/done accounting, the waiting cue (distinct from
+  the sign-off and dispatch pools), the quiet-gate bypass, the foreground-balances-to-sign-off
+  no-regression path, the TTL prune, and mute/no-op coverage for the new event (25 → 38).
+
 ## [0.9.0] - 2026-07-02
 
 ### Added
