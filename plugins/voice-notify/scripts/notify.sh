@@ -43,6 +43,9 @@ debounce="${CLAUDE_VOICE_NOTIFY_SUBAGENT_DEBOUNCE:-10}"
 case "$debounce" in ''|*[!0-9]*) debounce=10 ;; esac
 ttl="${CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL:-3600}"
 case "$ttl" in ''|*[!0-9]*) ttl=3600 ;; esac
+ttl=$((10#$ttl))   # force base-10: a leading-zero value (e.g. 0900) must not parse as octal
+                   # inside the later $(( ... - ttl )), which would error and, under set -u,
+                   # kill the whole stop arm (silencing every turn).
 
 # --- voice resolution, done lazily so "start" never pays for `say -v '?'` ---
 voice_resolved=""
