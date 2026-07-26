@@ -12,24 +12,44 @@ a terminal.
 ## What a block looks like
 
 When a command matches, the hook exits 2 and Claude sees this on stderr (so it stops
-and reports back instead of running it). For `rm -rf ~`:
+and reports back instead of running it). Every message names the specific rule that
+matched, states that variants of the same command are blocked too, and hands the
+command back as a ready-to-paste `!`-prefixed escape hatch — but the **second line**
+differs by class: commands with **no safe variant** (`rm -rf ~`, `dd` onto a disk,
+`mkfs`, a fork bomb, `reboot`, …) keep an explicit irreversibility warning and offer no
+alternative; commands with a **concrete safe variant** (`chmod 777`, `: >`, `eval`,
+`curl|sh`, `sudo`, …) drop that warning and name the alternative instead.
+
+**No safe variant** — `rm -rf ~`:
 
 ```text
 ⛔ shell-guard: blocked a dangerous command — recursive delete of a protected path.
    ⚠️  This is destructive and IRREVERSIBLE. Verify the target before running.
+   Variants of this command (reordered flags, different quoting, a wrapper prefix, $HOME for ~, …) are blocked too.
    To run it anyway, paste into the prompt (! runs it in your shell):
 ! rm -rf ~
    Or set SHELL_GUARD_DISABLE=1 / see /shell-guard.
 ```
 
+**A safe variant exists** — `chmod 777 x`:
+
+```text
+⛔ shell-guard: blocked a dangerous command — chmod 777 — world-writable permissions.
+   → Safe alternative: chmod 755 (or the narrowest mode the task needs).
+   Variants of this command (reordered flags, different quoting, a wrapper prefix, $HOME for ~, …) are blocked too.
+   To run it anyway, paste into the prompt (! runs it in your shell):
+! chmod 777 x
+   Or set SHELL_GUARD_DISABLE=1 / see /shell-guard.
+```
+
 The text after the dash names the matched rule (e.g. `network download piped into a
-shell`, `dd onto a raw disk device`, `sudo — privilege escalation`).
+shell`, `dd onto a raw disk device`, `sudo — privilege escalation`, or — for a
+user-configured `SHELL_GUARD_EXTRA_PATTERNS` entry — the literal pattern that matched).
 
 The blocked command is handed back as a ready-to-paste `!`-prefixed line — typed into
 the Claude Code prompt, `!` runs it in **your** shell, which this hook never gates.
-Because shell-guard only ever blocks **catastrophic** commands, that line is fronted
-with an explicit irreversibility warning: it is an override for when you are certain,
-not a frictionless one-paste re-run.
+Because a reworded or reordered retry is blocked the same way, that line — not a
+rephrased command — is the only path forward once you're certain.
 
 shell-guard is designed to **cover a typical `permissions.deny` shell list** in
 `~/.claude/settings.json`. That list matches command *strings* exactly, so it misses

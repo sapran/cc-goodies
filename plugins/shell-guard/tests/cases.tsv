@@ -70,3 +70,10 @@ init_0           0 -    init 0
 # (plain `timeout 5 rm -rf /` IS blocked; the `-s KILL` glued-value form is the
 #  evasion variant we deliberately do not chase — plan mode is the backstop)
 wrap_evade       0 -    timeout -s KILL 5 rm -rf /
+#
+# --- BLOCK: user-configured SHELL_GUARD_EXTRA_PATTERNS (EXTRA arm) ----------
+# A leading SHELL_GUARD_EXTRA_PATTERNS=value is the guard's ENVIRONMENT (read
+# via the env var, not the command text) — run.sh strips it and exports it for
+# this case only. The pattern is a distinctive, space-free literal so the
+# assertion can confirm the reason names THIS pattern, not a generic phrase.
+extra_pattern    2 -    SHELL_GUARD_EXTRA_PATTERNS=ZZZ_TEST_PATTERN_ZZZ echo hello ZZZ_TEST_PATTERN_ZZZ world

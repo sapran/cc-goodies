@@ -208,8 +208,11 @@ Tune to taste:
 To **override** a block for one command, run it yourself — the guards only ever gate
 Claude's Bash tool, never your own shell. Every block hands the command back as a
 ready-to-paste `!`-prefixed line; typed into the Claude Code prompt, `!` runs it in your
-shell, bypassing the hook. shell-guard fronts that line with an irreversibility warning,
-since the commands it blocks are catastrophic by design.
+shell, bypassing the hook. Both guards also state that a reworded or reordered retry is
+blocked the same way, so that paste-line is the only path forward. shell-guard fronts
+the line with an irreversibility warning for commands with no safer form (`rm -rf ~`,
+`dd` onto a disk, `reboot`, …); for commands with a concrete safe variant (`chmod 777`,
+`: >`, `eval`, `curl|sh`, `sudo`, …) it names that alternative instead.
 
 ---
 

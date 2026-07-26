@@ -84,13 +84,25 @@ TRUNC_RE='^[[:space:]]*:[[:space:]]*>([^>]|$)'
 
 # --- Helpers ----------------------------------------------------------------
 deny() {
-  # $1 = human reason. Hand the blocked command back as a copy-paste `!`-prefixed
-  # line: typed into the Claude Code prompt, the `!` prefix runs it in the user's
-  # own shell, which this hook never sees. $cmd is the original tool command.
-  # These are CATASTROPHIC commands by design, so we front the line with an
-  # explicit irreversibility warning — never a frictionless one-paste nuke.
-  printf '%s\n' "⛔ shell-guard: blocked a dangerous command — $1." >&2
-  printf '%s\n' "   ⚠️  This is destructive and IRREVERSIBLE. Verify the target before running." >&2
+  # $1 = axis-1 class (design.md's AXIS 1, `alternative: named|none` — NOT the
+  #      `channel: deny|ask` axis owned by the sibling guard-ask-escalation
+  #      change, which this script never touches):
+  #        none    - no safe variant of this action exists; keep the
+  #                  irreversibility warning, offer no alternative.
+  #        named   - a safe variant exists; print it instead of that warning.
+  #        neutral - severity unknown (the EXTRA arm only); print neither.
+  # $2 = human reason, naming the specific rule that matched.
+  # $3 = safe alternative text (class=named only).
+  # Hand the blocked command back as a copy-paste `!`-prefixed line: typed
+  # into the Claude Code prompt, the `!` prefix runs it in the user's own
+  # shell, which this hook never sees. $cmd is the original tool command.
+  class="$1"; reason="$2"; alt="${3:-}"
+  printf '%s\n' "⛔ shell-guard: blocked a dangerous command — $reason." >&2
+  case "$class" in
+    none)  printf '%s\n' "   ⚠️  This is destructive and IRREVERSIBLE. Verify the target before running." >&2 ;;
+    named) printf '%s\n' "   → Safe alternative: $alt." >&2 ;;
+  esac
+  printf '%s\n' "   Variants of this command (reordered flags, different quoting, a wrapper prefix, \$HOME for ~, …) are blocked too." >&2
   printf '%s\n' "   To run it anyway, paste into the prompt (! runs it in your shell):" >&2
   printf '%s\n' "! $cmd" >&2
   printf '%s\n' "   Or set SHELL_GUARD_DISABLE=1 / see /shell-guard." >&2
@@ -179,7 +191,7 @@ eval_stage() {
         esac
       done
       if [ "$nopreserve" = 1 ] || { [ "$has_r" = 1 ] && [ "$cata" = 1 ]; }; then
-        deny "recursive delete of a protected path"; return 2
+        deny none "recursive delete of a protected path"; return 2
       fi
       ;;
     dd)
@@ -189,32 +201,32 @@ eval_stage() {
         na="${a//\"/}"; na="${na//\'/}"
         case "$na" in
           of=/dev/disk*|of=/dev/rdisk*|of=/dev/sd*|of=/dev/hd*|of=/dev/nvme*|of=/dev/vd*)
-            deny "dd onto a raw disk device"; return 2 ;;
+            deny none "dd onto a raw disk device"; return 2 ;;
         esac
       done
       ;;
     mkfs|mkfs.*|wipefs|newfs|newfs_*)
-      deny "filesystem creation/wipe ($c)"; return 2
+      deny none "filesystem creation/wipe ($c)"; return 2
       ;;
     diskutil)
       case "${1:-}" in
         eraseDisk|eraseVolume|reformat|zeroDisk|secureErase|partitionDisk|eraseall)
-          deny "destructive diskutil ($1)"; return 2 ;;
-        apfs) case "${2:-}" in delete*|erase*) deny "destructive diskutil (apfs $2)"; return 2 ;; esac ;;
+          deny none "destructive diskutil ($1)"; return 2 ;;
+        apfs) case "${2:-}" in delete*|erase*) deny none "destructive diskutil (apfs $2)"; return 2 ;; esac ;;
       esac
       ;;
     reboot|shutdown|halt|poweroff)
-      deny "system halt/reboot ($c)"; return 2
+      deny none "system halt/reboot ($c)"; return 2
       ;;
     sudo|doas|su|runuser|pkexec|gosu|sudoedit|setpriv)
-      deny "$c — privilege escalation"; return 2
+      deny named "$c — privilege escalation" "run the command directly, without \`$c\`"; return 2
       ;;
     eval)
-      deny "eval — arbitrary code execution"; return 2
+      deny named "eval — arbitrary code execution" "run the intended command directly, without the eval indirection"; return 2
       ;;
     chmod)
       for a in "$@"; do
-        case "$a" in 777|0777) deny "chmod 777 — world-writable permissions"; return 2 ;; esac
+        case "$a" in 777|0777) deny named "chmod 777 — world-writable permissions" "chmod 755 (or the narrowest mode the task needs)"; return 2 ;; esac
       done
       ;;
   esac
@@ -255,25 +267,25 @@ evaluate_segment() {
 
   # -- structural checks (these only survive on the raw segment text) --------
   if [[ "$seg" =~ $DEV_RE ]]; then
-    deny "redirect onto a raw disk device"; return 2
+    deny none "redirect onto a raw disk device"; return 2
   fi
   if [[ "$seg" =~ $TRUNC_RE ]]; then
-    deny "truncate a file to empty (\`: >\`)"; return 2
+    deny named "truncate a file to empty (\`: >\`)" "printf '' >"; return 2
   fi
   if [[ "$seg" =~ $FORK_RE ]]; then
     fn="${BASH_REMATCH[1]}"; body="${BASH_REMATCH[2]}"
     if [[ "$body" == *"|"* && "$body" == *"&"* && "$body" == *"$fn"* ]]; then
-      deny "fork bomb"; return 2
+      deny none "fork bomb"; return 2
     fi
   fi
   # curl|sh — command-word-anchored (see detect_net_pipe).
-  detect_net_pipe "$seg" || { deny "network download piped into a shell"; return 2; }
+  detect_net_pipe "$seg" || { deny named "network download piped into a shell" "download to a file, read it, then run it as a separate reviewed step"; return 2; }
 
   # User-supplied extra patterns (ERE), ;- or newline-separated.
   if [ -n "${EXTRA:-}" ]; then
     while IFS= read -r pat; do
       [ -n "$pat" ] || continue
-      [[ "$seg" =~ $pat ]] && { deny "matches a configured block pattern"; return 2; }
+      [[ "$seg" =~ $pat ]] && { deny neutral "matches your configured SHELL_GUARD_EXTRA_PATTERNS rule: $pat"; return 2; }
     done <<EOF2
 $(printf '%s\n' "$EXTRA" | awk '{gsub(/;/,"\n")}1')
 EOF2
