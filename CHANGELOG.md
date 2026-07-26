@@ -7,6 +7,51 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added
+
+- **`voice-notify` names the agent's purpose, and says when the work comes back** (plugin
+  `0.5.0` → `0.6.0`). A subagent fan-out used to be voiced anonymously — one generic
+  *"Spinning up some helpers"* at dispatch and, by design, **silence** on every completion.
+  You learned that work had been delegated, never what it was, and never that it returned;
+  the only echo was the waiting cue at `Stop`, after which the all-clear never came.
+
+  The dispatch cue now names the work — one agent alone (*"Handing off — review script
+  changes."*), two in full, three or more as a count plus the first (*"Five helpers,
+  starting with review script changes."*). Because Claude Code fires the dispatch hook once
+  per agent, the cue can't know its burst size at the instant the first agent fires, so the
+  speaker claims the burst create-only and waits `CLAUDE_VOICE_NOTIFY_SUBAGENT_COLLECT`
+  seconds (default 2) for its siblings to register first.
+
+  Completions are voiced once each, when the result reaches the parent session, with a
+  distinct pool for an agent that came back empty. The two cases arrive through different
+  events, and the split is what keeps any agent from being announced twice: a **foreground**
+  agent's new `PostToolUse`/`Agent` hook carries both the description and a completed
+  response, while a **background** agent's `PostToolUse` is a launch acknowledgement fired
+  milliseconds after dispatch — that one only records the agent's id and purpose, and the
+  cue waits for `SubagentStop`, where the agent is still listed in its own
+  `background_tasks` with its description.
+
+  Individual cues are capped at `CLAUDE_VOICE_NOTIFY_AGENT_NAME_CAP` (default 3) concurrent
+  agents so a wide sweep doesn't become a monologue, and a roll-up (*"All five helpers are
+  back."*) closes the batch — but only when the cap or a waiting cue left something unsaid.
+  A small fan-out named all the way through already ended with its own all-clear.
+
+  `background_tasks` also replaces marker counting as the in-flight source at `Stop` and
+  `SubagentStop`, retiring the stale-marker wedge that `CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL`
+  exists to paper over; the markers remain as the fallback for Claude Code versions that
+  don't send the field, so nothing regresses. Naming completions makes two `say` calls
+  overlap for the first time, so all cues now serialise through a create-only `$TMPDIR`
+  lock and **drop** rather than queue under contention. Agent descriptions are
+  model-authored, so they are stripped of control characters, truncated on a word boundary
+  at `CLAUDE_VOICE_NOTIFY_AGENT_DESC_MAX` (default 60), have `say`'s `[[…]]` directive
+  syntax neutralised, and are always passed as a single quoted argument.
+
+  New knobs: `CLAUDE_VOICE_NOTIFY_AGENT_NAMES=off` restores the anonymous `0.5.0` cues
+  wholesale, plus `..._AGENT_NAME_CAP`, `..._AGENT_DESC_MAX` and
+  `..._SUBAGENT_COLLECT`. Missing `jq`, a non-macOS host, and both existing mutes degrade
+  exactly as before. The suite grew from 40 cases to 90; all state stays in `$TMPDIR`, so
+  `/plugin uninstall` remains the complete revert.
+
 ### Changed
 
 - **`project-scope`'s conflict rule no longer names specific third-party plugins** (plugin
