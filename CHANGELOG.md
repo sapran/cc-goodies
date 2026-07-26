@@ -54,11 +54,78 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   exactly as before. The suite grew from 40 cases to 92; all state stays in `$TMPDIR`, so
   `/plugin uninstall` remains the complete revert.
 
+## [0.11.0] - 2026-07-26
+
+Reassesses four plugins against the design assumptions of the Claude 5 generation: judgment
+framing over prescriptive rules, progressive disclosure over upfront loading, and no
+repetition across context layers. The guards are never read by a model, so their work is
+interface work on the one string a model does see; the skills are read in full, so theirs is
+architecture.
+
+### Added
+
+- **`shell-guard` routes hygiene-class blocks to the permission prompt** (plugin `0.3.1` →
+  `0.4.1`). Arms resolve on a decision channel: commands a human can meaningfully judge now
+  escalate to the prompt they are already looking at, instead of costing a round-trip through
+  a pasted escape-hatch line. The catastrophic arms still refuse outright, and so does a
+  network fetch inside an `eval` argument — the approver would see the URL, never the payload.
+  Verified first that escalation is safe unattended: in headless runs, including under bypass
+  mode, it resolves in seconds, fires once, and degrades to a refusal carrying the same
+  reason, so it is never weaker than refusing. `git-guard` stays refuse-only by design.
+
+  Review of the first cut caught a way this weakened the guard, fixed in `0.4.1`: the ask
+  emitter ended the process on its first match, so a later segment of a compound command was
+  never scanned and an escalation could front a refusal — `chmod 777 …; rm -rf /` surfaced as
+  a prompt naming only the `chmod`. Decisions are now resolved after the whole command is
+  scanned, with a refusal anywhere outranking an escalation anywhere. The same first-match
+  shape had narrowed the fetch-inside-`eval` exception to a single segment; it now tokenizes
+  the whole command, matches whole words, folds case, and follows assignment indirection.
+
+- **Both guards name the rule they matched, and the way out** (`git-guard` `0.2.3` →
+  `0.2.4`). The block message is a guard's only model-facing interface and the hook API has
+  no non-retryable signal, so wording is the sole lever against a model retrying variants.
+  Arms with no narrower form keep an explicit irreversibility warning; arms with a safe
+  variant now name it concretely. The user-pattern arm, which previously emitted an unnamed
+  reason and so guaranteed blind retry, now names the literal pattern it matched. Every
+  message states that variants are blocked too. Both test harnesses gained stderr-content
+  assertions, having previously asserted exit codes alone.
+
 ### Changed
 
-- **`project-scope`'s conflict rule no longer names specific third-party plugins** (plugin
-  `0.2.1` → `0.2.2`). The rule — never silently remove a resource the user's global
-  `CLAUDE.md` declares authoritative or always-on — illustrated itself with three named
+- **`project-scope` is now a router over its references** (plugin `0.2.1` → `0.3.2`).
+  `SKILL.md` drops from 287 to 91 lines; mechanics live only in `references/`. Removes the
+  constants that had become judgment suppressors rather than scaffolding — a stopword list, a
+  substring heuristic, fixed result caps, fixed budget options, a question-overflow rule — and
+  collapses a red-flag list to one invariant. Phase 1 inventory delegates to a subagent so the
+  large catalog stream stays out of the main context, and Phase 3 asks about an ambiguous
+  theme up front instead of resolving it by keyword match. Behaviour is unchanged.
+
+- **`session-finalise` states its invariant instead of an eight-step script** (plugin `0.2.1`
+  → `0.3.1`). The skill encoded its phase contract three times and claimed the order was a
+  safety property; only one edge is — cleanup must not run before pending work is saved.
+  `SKILL.md` drops from 151 to 95 lines with phase detail in six reference files. The memory
+  phase stops reciting a path rule, schema and index format the harness now supplies natively
+  and becomes reconciliation against what was already captured; tracker detection describes
+  the capability sought rather than enumerating vendors, so it no longer fails closed on an
+  unlisted one. Two user-specific product rules leave the plugin. Consent gates unchanged.
+
+- **Skill descriptions carry trigger surface, not capability prose.** A description is
+  always-on context in every session where the plugin is installed. `project-scope`'s dropped
+  from 92 to 52 words, its command description from 233 to 58 characters, and its marketplace
+  entry likewise; `session-finalise`'s was already trigger-only and is untouched. Trigger
+  coverage was verified rather than assumed.
+
+- **`rules/shell-safety.md` trimmed to what a model cannot infer** — 47 to 34 lines. Most of
+  it had become a restatement of default behaviour or a duplicate of the guards' own
+  enforcement. Two facts were missing and are now stated: that a leading directory change is
+  invisible to `git-guard`, which resolves the branch from the session working directory
+  unless the repository is named explicitly, and that a refusal or declined escalation can be
+  overridden by running the command directly in a terminal. Trimming advice is not licence to
+  weaken enforcement, and the spec says so.
+
+- **`project-scope`'s conflict rule no longer names specific third-party plugins.** The rule —
+  never silently remove a resource the user's global `CLAUDE.md` declares authoritative or
+  always-on — illustrated itself with three named
   examples, one of which was the `caveman` plugin removed elsewhere in this release. Named
   examples date; the rule does not. They are now described by kind (a memory store, a local
   model endpoint, a session-start output style), so the guidance stays correct as a user's
@@ -81,6 +148,16 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   does nothing, and they can be dropped from shell profiles. If you still run caveman and
   want its badge, wire the caveman plugin's own `caveman-statusline.sh` into the
   `statusLine` slot instead of this statusline.
+
+### Fixed
+
+- **`project-scope` reported another model's token costs as the session's.** The catalog-cache
+  lookup read an arbitrary first key, so against a cache carrying only Claude-4-generation
+  entries every Claude-5 session silently got Opus figures, non-deterministically across cache
+  orderings — while the reference prose described a fallback the code never implemented. A
+  skill cannot learn its own model ID programmatically, so the model self-states it and the
+  query resolves exact, then family, then unavailable, disclosing every non-exact match and
+  excluding unavailable figures from the budget sum.
 
 ## [0.10.0] - 2026-07-08
 

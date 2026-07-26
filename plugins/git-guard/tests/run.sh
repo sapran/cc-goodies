@@ -7,7 +7,11 @@
 # a command line), pipes it to the dev script as a SUBPROCESS, and asserts the
 # exit code. Running the dev script as a subprocess means the LIVE PreToolUse
 # hook never sees these commands — so a temp repo can sit on `main` and we can
-# feed it `git push origin main` without self-blocking.
+# feed it `git push origin main` without self-blocking. For blocking cases it
+# also captures stderr and asserts message content: the reason phrase for a
+# representative subset of ids is unchanged, and every blocking case carries
+# the protected-branch list, the new variants-also-blocked clause, and the
+# `! $cmd` escape hatch.
 #
 # Cases live in cases.tsv (id <TAB> branch <TAB> expect <TAB> command), written
 # with the editor (not a Bash call), so dangerous literals never hit a shell.
@@ -39,6 +43,24 @@ make_repo() {
   printf '%s' "$d"
 }
 
+# Reason-phrase lookup for a representative subset of case IDs — confirms the
+# *existing* reason text (branch name / verb) is unchanged by the new variants
+# line (task 3.3). IDs not listed here still get the generic assertions below.
+reason_for() {
+  case "$1" in
+    commit-on-main)        printf '%s' "commit on protected branch 'main'" ;;
+    merge-on-main)         printf '%s' "merge on protected branch 'main'" ;;
+    push-origin-main)      printf '%s' "push to protected branch 'main'" ;;
+    push-bare-on-main)     printf '%s' "push to protected branch 'main'" ;;
+    push-multi-includes-main) printf '%s' "push to protected branch 'main'" ;;
+    branch-D-main)         printf '%s' "branch on protected branch 'main'" ;;
+    branch-f-main)         printf '%s' "branch on protected branch 'main'" ;;
+    push-all)              printf '%s' "push --all/--mirror (touches protected branches)" ;;
+    push-mirror)           printf '%s' "push --all/--mirror (touches protected branches)" ;;
+    blockall-push-feature) printf '%s' "push (GIT_GUARD_BLOCK_ALL_PUSH is set)" ;;
+  esac
+}
+
 pass=0; fail=0; total=0
 tmpdirs=""
 
@@ -64,20 +86,35 @@ while IFS="$tab" read -r id branch expect command; do
 
   json=$(MSG="$cmd" CWDV="$repo" jq -nc '{tool_name:"Bash",tool_input:{command:env.MSG},cwd:env.CWDV}')
 
+  # Capture stderr only (stdout discarded): `2>&1 >/dev/null` duplicates
+  # stderr to the substitution before redirecting stdout away.
   if [ -n "$envassign" ]; then
     key="${envassign%%=*}"; val="${envassign#*=}"
-    printf '%s' "$json" | env "$key=$val" bash "$script" >/dev/null 2>&1
+    err=$(printf '%s' "$json" | env "$key=$val" bash "$script" 2>&1 >/dev/null)
   else
-    printf '%s' "$json" | bash "$script" >/dev/null 2>&1
+    err=$(printf '%s' "$json" | bash "$script" 2>&1 >/dev/null)
   fi
   got=$?
 
-  if [ "$got" = "$expect" ]; then
+  msg_ok=1; msg_detail=""
+  if [ "$expect" = "2" ] && [ "$got" = "2" ]; then
+    case "$err" in *"! $cmd"*) ;; *) msg_ok=0; msg_detail="$msg_detail no-escape-hatch-line"; esac
+    case "$err" in *"are blocked too"*) ;; *) msg_ok=0; msg_detail="$msg_detail no-variants-clause"; esac
+    case "$err" in *"Protected: main master."*) ;; *) msg_ok=0; msg_detail="$msg_detail no-protected-list"; esac
+    case "$err" in *"GIT_GUARD_DISABLE=1"*) ;; *) msg_ok=0; msg_detail="$msg_detail no-disable-pointer"; esac
+
+    rp=$(reason_for "$id")
+    if [ -n "$rp" ]; then
+      case "$err" in *"$rp"*) ;; *) msg_ok=0; msg_detail="$msg_detail unexpected-reason[want:$rp]" ;; esac
+    fi
+  fi
+
+  if [ "$got" = "$expect" ] && [ "$msg_ok" = 1 ]; then
     pass=$((pass+1))
     printf 'PASS  %-26s [%s] expect=%s got=%s\n' "$id" "$branch" "$expect" "$got"
   else
     fail=$((fail+1))
-    printf 'FAIL  %-26s [%s] expect=%s got=%s  cmd=%s\n' "$id" "$branch" "$expect" "$got" "$cmd"
+    printf 'FAIL  %-26s [%s] expect=%s got=%s msg_ok=%s%s  cmd=%s\n' "$id" "$branch" "$expect" "$got" "$msg_ok" "$msg_detail" "$cmd"
   fi
 done < "$cases"
 

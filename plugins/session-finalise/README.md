@@ -20,19 +20,12 @@ Two entry points, same checklist:
 
 ## What it does
 
-A **skippable, ordered** checklist — the order is a safety property (preserve before delete).
-Claude proposes only the phases the session actually needs and lets you drop any:
-
-| Phase | Mutates? | Gate |
-|-------|----------|------|
-| 1 Orient | no | snapshot `git status` / worktrees / recent log; nothing changes |
-| 2 Commit / stash | yes | confirm; never `main`; confirm push |
-| 3 Durable memory | yes (memory store) | match the existing frontmatter schema |
-| 4 Handoff | delegated | invoke `remember`; only if a continuation is useful |
-| 5 Trackers | maybe | detect what's wired first; confirm each mutation; no HTML in Asana |
-| 6 Summary | no | short recap of the session |
-| 7 Cleanup | yes (deletes) | confirm each file delete / worktree removal |
-| 8 Report | no | terse summary of what ran and what was skipped |
+A **skippable** checklist — Claude proposes only the phases the session actually needs and lets
+you drop any. The one rule that's actually a safety property: nothing is destroyed or discarded
+before it's saved and confirmed, so cleanup only runs once anything it could destroy has already
+been committed, stashed, or confirmed as discardable. See the skill
+([`skills/session-finalise/SKILL.md`](skills/session-finalise/SKILL.md)) for the phase list and
+its `references/` for how each phase works.
 
 Output is terse by default, but **every confirmation prompt and irreversible-action warning
 is written in full prose** — those are the moments you must read carefully.

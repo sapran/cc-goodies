@@ -1,15 +1,23 @@
 #!/bin/bash
 # cc-goodies / shell-guard
-# Block a small, curated set of *catastrophic* shell commands before they run.
+# Block or ask before a small, curated set of *catastrophic* shell commands run.
 #
 # Wired as a PreToolUse hook on the Bash tool. The tool call's JSON arrives on
 # stdin; we read .tool_input.command and .cwd, split the command into segments,
-# and block (exit 2) when a segment matches a high-confidence dangerous pattern:
-# wiping `/` or `$HOME`, recursively deleting a top-level system dir, writing
-# onto a raw disk device, mkfs/wipefs/destructive diskutil, a fork bomb, piping
-# a network download into a shell, truncating a file to empty (`: >`), `chmod 777`,
-# `eval`, privilege escalation (`sudo`/`doas`/…), and system halt/reboot.
-# Everything else passes straight through.
+# and act when a segment matches a high-confidence dangerous pattern. Every
+# matched arm resolves to one of two AXIS 2 channels (design.md, guard-ask-
+# escalation): DENY (exit 2, stderr) for harm that is irreversible or that a
+# human at a prompt could not actually judge — wiping `/` or `$HOME`, a top-
+# level system dir, writing onto a raw disk device, mkfs/wipefs/destructive
+# diskutil, a fork bomb, a network download piped into a shell (including via
+# `eval "$(curl …)"`), and system halt/reboot; or ASK (permissionDecision:
+# "ask" JSON on stdout, exit 0) for harm that is reversible and disclosed in
+# the command text itself — truncating a file to empty (`: >`), `chmod 777`,
+# `eval` (without a fetched payload), and privilege escalation (`sudo`/`doas`/
+# …). Everything else passes straight through. A compound command (`;`/`&&`/
+# `||`/pipes/newlines) is scanned to completion before any decision is made —
+# deny > ask > allow — so a deny anywhere wins regardless of where it sits;
+# only a deny short-circuits early, since nothing later could outrank it.
 #
 # Threat model: an *aligned* agent that emits a catastrophic command BY ACCIDENT
 # in plain form (`rm -rf /`). This is a convenience guard, not a sandbox — it does
@@ -28,8 +36,12 @@
 # call (fails OPEN — a guard that blocks everything when a dependency is missing
 # is worse than no guard).
 #
-# Exit codes: 0 = allow, 2 = block (stderr is fed back to Claude). Any other
-# code is a non-blocking error in the hooks API, so we never use one to deny.
+# Exit codes: 0 = allow, OR ask (permissionDecision:"ask" JSON on stdout — the
+# harness escalates to the human's own permission prompt, and degrades to a
+# blocked command with no code-level help needed when nobody is there to answer
+# it: verified headless, see design.md Decision D3). 2 = deny (stderr is fed
+# back to Claude). Any other code is a non-blocking error in the hooks API, so
+# we never use one to deny.
 
 set -u
 set -f   # never glob while tokenising — keep `*` / `.*` literal in the command
@@ -82,19 +94,83 @@ FORK_RE='([A-Za-z_:][A-Za-z0-9_:]*)\(\)[[:space:]]*\{(.*)\}'
 # single `>` redirect. (A bare `> file` is an ordinary redirect — not matched.)
 TRUNC_RE='^[[:space:]]*:[[:space:]]*>([^>]|$)'
 
+# --- Decision-resolution state ------------------------------------------------
+# SEVERITY RESOLUTION: deny > ask > allow, resolved ONCE after the *entire*
+# command has been scanned — not by whichever arm is matched first. deny()
+# still short-circuits the scan immediately (via `return 2` propagating up to
+# an `exit 2` in the main loop below): deny is already the maximum severity, so
+# nothing later in the command could change the outcome. ask() is different —
+# it must NOT exit, or a deny-class arm in a later segment would never be seen
+# (this was the exact regression: an early ask() used to `exit 0` mid-scan).
+# Instead ask() records the pending decision here; only the FIRST ask recorded
+# survives (ASK_PENDING guards against a later ask overwriting it), and it is
+# emitted — if the scan reaches the end without ever hitting a deny — by the
+# one `jq` call at the bottom of the script.
+ASK_PENDING=0
+ASK_REASON=""
+
 # --- Helpers ----------------------------------------------------------------
+# $1 = axis-1 class, shared by deny() and ask() below (design.md's AXIS 1,
+#      `alternative: named|none` — independent of the `channel: deny|ask` axis
+#      (AXIS 2) that picks WHICH of these two functions a matched arm calls):
+#        none    - no safe variant of this action exists; keep the
+#                  irreversibility warning, offer no alternative.
+#        named   - a safe variant exists; print it instead of that warning.
+#        neutral - severity unknown (the EXTRA arm only); print neither.
+# $2 = human reason, naming the specific rule that matched.
+# $3 = safe alternative text (class=named only).
+# Both hand the command back as a copy-paste `!`-prefixed line: typed into the
+# Claude Code prompt, the `!` prefix runs it in the user's own shell, which
+# this hook never sees. $cmd is the original tool command.
 deny() {
-  # $1 = human reason. Hand the blocked command back as a copy-paste `!`-prefixed
-  # line: typed into the Claude Code prompt, the `!` prefix runs it in the user's
-  # own shell, which this hook never sees. $cmd is the original tool command.
-  # These are CATASTROPHIC commands by design, so we front the line with an
-  # explicit irreversibility warning — never a frictionless one-paste nuke.
-  printf '%s\n' "⛔ shell-guard: blocked a dangerous command — $1." >&2
-  printf '%s\n' "   ⚠️  This is destructive and IRREVERSIBLE. Verify the target before running." >&2
+  # DENY-channel arm: irreversible harm, or harm an `ask` prompt could not let
+  # a human judge (see design.md Decision D1). Blocks outright: exit 2, stderr.
+  class="$1"; reason="$2"; alt="${3:-}"
+  printf '%s\n' "⛔ shell-guard: blocked a dangerous command — $reason." >&2
+  case "$class" in
+    none)  printf '%s\n' "   ⚠️  This is destructive and IRREVERSIBLE. Verify the target before running." >&2 ;;
+    named) printf '%s\n' "   → Safe alternative: $alt." >&2 ;;
+  esac
+  printf '%s\n' "   Variants of this command (reordered flags, different quoting, a wrapper prefix, \$HOME for ~, …) are blocked too." >&2
   printf '%s\n' "   To run it anyway, paste into the prompt (! runs it in your shell):" >&2
   printf '%s\n' "! $cmd" >&2
   printf '%s\n' "   Or set SHELL_GUARD_DISABLE=1 / see /shell-guard." >&2
   return 2
+}
+
+ask() {
+  # ASK-channel arm (AXIS 2, guard-ask-escalation): harm that is reversible and
+  # fully disclosed in the command text a human would read at a permission
+  # prompt (see design.md Decision D1). Carries the exact same axis-1 class/
+  # reason/alt message substance deny() uses — same escape hatch, same
+  # variants clause — so the two channels differ only in delivery mechanism,
+  # never in what they tell the human. When nobody is there to answer the
+  # prompt (headless/background), the harness itself degrades this to a
+  # blocked command — verified, see design.md Decision D3.
+  #
+  # SEVERITY RESOLUTION: this function does NOT exit or print. It records the
+  # pending ask (first one wins — a later ask must not overwrite an earlier
+  # arm's reason) and returns, so the caller keeps scanning the rest of the
+  # command: a deny-class arm anywhere else — even a later segment — must
+  # still win. The recorded message is only emitted, once, at the very end of
+  # the script, and only if nothing denied along the way.
+  [ "$ASK_PENDING" = 1 ] && return 0
+  class="$1"; reason="$2"; alt="${3:-}"
+  msg="🟡 shell-guard: this needs your OK — $reason."
+  case "$class" in
+    none)  msg="$msg
+   ⚠️  This is destructive and IRREVERSIBLE. Verify the target before running." ;;
+    named) msg="$msg
+   → Safe alternative: $alt." ;;
+  esac
+  msg="$msg
+   Variants of this command (reordered flags, different quoting, a wrapper prefix, \$HOME for ~, …) are blocked too.
+   To run it anyway, paste into the prompt (! runs it in your shell):
+! $cmd
+   Or set SHELL_GUARD_DISABLE=1 / see /shell-guard."
+  ASK_PENDING=1
+  ASK_REASON="$msg"
+  return 0
 }
 
 # Is this argument a catastrophic target — `/`, `$HOME`/`~`, a top-level system
@@ -179,7 +255,7 @@ eval_stage() {
         esac
       done
       if [ "$nopreserve" = 1 ] || { [ "$has_r" = 1 ] && [ "$cata" = 1 ]; }; then
-        deny "recursive delete of a protected path"; return 2
+        deny none "recursive delete of a protected path"; return 2
       fi
       ;;
     dd)
@@ -189,32 +265,49 @@ eval_stage() {
         na="${a//\"/}"; na="${na//\'/}"
         case "$na" in
           of=/dev/disk*|of=/dev/rdisk*|of=/dev/sd*|of=/dev/hd*|of=/dev/nvme*|of=/dev/vd*)
-            deny "dd onto a raw disk device"; return 2 ;;
+            deny none "dd onto a raw disk device"; return 2 ;;
         esac
       done
       ;;
     mkfs|mkfs.*|wipefs|newfs|newfs_*)
-      deny "filesystem creation/wipe ($c)"; return 2
+      deny none "filesystem creation/wipe ($c)"; return 2
       ;;
     diskutil)
       case "${1:-}" in
         eraseDisk|eraseVolume|reformat|zeroDisk|secureErase|partitionDisk|eraseall)
-          deny "destructive diskutil ($1)"; return 2 ;;
-        apfs) case "${2:-}" in delete*|erase*) deny "destructive diskutil (apfs $2)"; return 2 ;; esac ;;
+          deny none "destructive diskutil ($1)"; return 2 ;;
+        apfs) case "${2:-}" in delete*|erase*) deny none "destructive diskutil (apfs $2)"; return 2 ;; esac ;;
       esac
       ;;
     reboot|shutdown|halt|poweroff)
-      deny "system halt/reboot ($c)"; return 2
+      deny none "system halt/reboot ($c)"; return 2
       ;;
     sudo|doas|su|runuser|pkexec|gosu|sudoedit|setpriv)
-      deny "$c — privilege escalation"; return 2
+      ask named "$c — privilege escalation" "run the command directly, without \`$c\`"
       ;;
     eval)
-      deny "eval — arbitrary code execution"; return 2
+      # AXIS 2 channel-selection refinement (guard-ask-escalation, design.md
+      # Decision D1's eval-exception): a fetched payload isn't visible to a
+      # human at an ask prompt — same "can't approve what you can't see"
+      # principle as detect_net_pipe's curl|sh arm below — so check the WHOLE
+      # ORIGINAL command ($cmd, not just this stage or this segment) for a
+      # download word: the fetch can be split from its eval across a `;`/
+      # `&&`/`||`/newline, or indirected through a variable (`x=curl; eval
+      # "$($x …)"`), so a per-segment check misses it (that was the bug).
+      # has_download_word() is word-anchored, not a raw substring match, so
+      # "curling"/"wgettable" stay ask — and case-insensitive, since macOS's
+      # case-insensitive filesystem means `CURL` resolves to the same binary.
+      # Detection of `eval` itself is unchanged — this only decides which
+      # channel the already-matched eval arm resolves to.
+      if has_download_word "$cmd"; then
+        deny named "eval — arbitrary code execution" "run the intended command directly, without the eval indirection"; return 2
+      else
+        ask named "eval — arbitrary code execution" "run the intended command directly, without the eval indirection"
+      fi
       ;;
     chmod)
       for a in "$@"; do
-        case "$a" in 777|0777) deny "chmod 777 — world-writable permissions"; return 2 ;; esac
+        case "$a" in 777|0777) ask named "chmod 777 — world-writable permissions" "chmod 755 (or the narrowest mode the task needs)" ;; esac
       done
       ;;
   esac
@@ -249,31 +342,61 @@ EOF_NET
   return 0
 }
 
+# Whole-command scope check for the eval/download exception above: is
+# curl/wget/fetch present anywhere in $1 as an ISOLATED word — never a raw
+# substring match, so "curling"/"wgettable" don't match — case-insensitively
+# (bash-3.2-compatible: `tr`, not `${x,,}`)? Splits on the same shell
+# metacharacters detect_net_pipe uses (stage boundaries), PLUS `=` within each
+# resulting stage, so `x=curl` (assign, then reference the variable — the
+# assignment is otherwise a single token with nothing after it, invisible to a
+# leading-command-word check) is still caught without resolving what the
+# variable expands to at runtime. Unlike detect_net_pipe, every word in a
+# stage is checked, not just its leading command word, since this check is
+# about a download word appearing ANYWHERE in the text an eval will run —
+# not about identifying which stage is itself a running command.
+has_download_word() {
+  while IFS= read -r stage; do
+    [ -n "$stage" ] || continue
+    stage="${stage//=/ }"   # VAR=curl -> VAR curl, so the value is its own word
+    # shellcheck disable=SC2086
+    set -- $stage
+    for w in "$@"; do
+      case "$w" in */*) w="${w##*/}" ;; esac
+      w="${w#\\}"; w="${w//\"/}"; w="${w//\'/}"
+      w=$(printf '%s' "$w" | tr '[:upper:]' '[:lower:]')
+      case "$w" in curl|wget|fetch) return 0 ;; esac
+    done
+  done <<EOF_DL
+$(printf '%s\n' "$1" | awk '{gsub(/&&|\|\||;/,"\n"); gsub(/[|&(){}]/,"\n"); gsub(/\140/,"\n")}1')
+EOF_DL
+  return 1
+}
+
 # Evaluate ONE command segment. Returns 2 (and prints) to block, 0 to allow.
 evaluate_segment() {
   seg="$1"
 
   # -- structural checks (these only survive on the raw segment text) --------
   if [[ "$seg" =~ $DEV_RE ]]; then
-    deny "redirect onto a raw disk device"; return 2
+    deny none "redirect onto a raw disk device"; return 2
   fi
   if [[ "$seg" =~ $TRUNC_RE ]]; then
-    deny "truncate a file to empty (\`: >\`)"; return 2
+    ask named "truncate a file to empty (\`: >\`)" "printf '' >"
   fi
   if [[ "$seg" =~ $FORK_RE ]]; then
     fn="${BASH_REMATCH[1]}"; body="${BASH_REMATCH[2]}"
     if [[ "$body" == *"|"* && "$body" == *"&"* && "$body" == *"$fn"* ]]; then
-      deny "fork bomb"; return 2
+      deny none "fork bomb"; return 2
     fi
   fi
   # curl|sh — command-word-anchored (see detect_net_pipe).
-  detect_net_pipe "$seg" || { deny "network download piped into a shell"; return 2; }
+  detect_net_pipe "$seg" || { deny named "network download piped into a shell" "download to a file, read it, then run it as a separate reviewed step"; return 2; }
 
   # User-supplied extra patterns (ERE), ;- or newline-separated.
   if [ -n "${EXTRA:-}" ]; then
     while IFS= read -r pat; do
       [ -n "$pat" ] || continue
-      [[ "$seg" =~ $pat ]] && { deny "matches a configured block pattern"; return 2; }
+      [[ "$seg" =~ $pat ]] && { deny neutral "matches your configured SHELL_GUARD_EXTRA_PATTERNS rule: $pat"; return 2; }
     done <<EOF2
 $(printf '%s\n' "$EXTRA" | awk '{gsub(/;/,"\n")}1')
 EOF2
@@ -294,7 +417,11 @@ EOF_STAGE
 
 # Split the command on shell separators (&&, ||, ;) and physical newlines, then
 # judge each piece independently. Best-effort: exotic quoting can hide an op,
-# which fails open — acceptable for a convenience guard.
+# which fails open — acceptable for a convenience guard. A deny anywhere exits
+# immediately (max severity — nothing later could change the outcome). An ask
+# does NOT exit here (see ask()'s own comment) — the loop runs to completion
+# so a deny in a LATER segment still wins; only once every segment has been
+# scanned clean of any deny do we emit whichever ask was recorded first.
 while IFS= read -r seg; do
   [ -n "$seg" ] || continue
   evaluate_segment "$seg" || exit 2
@@ -302,4 +429,8 @@ done <<EOF
 $(printf '%s\n' "$cmd" | awk '{gsub(/&&|\|\||;/,"\n")}1')
 EOF
 
+if [ "$ASK_PENDING" = 1 ]; then
+  jq -n --arg reason "$ASK_REASON" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask",permissionDecisionReason:$reason}}'
+fi
 exit 0

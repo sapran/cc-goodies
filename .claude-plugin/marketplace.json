@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Developer-experience extras for Claude Code: spoken notifications, an enriched statusline, a protected-branch guard, a dangerous-command guard, an RTK token-optimizer hook, an end-of-session finaliser, a per-project tool scoper, and a Codex-MCP web-research helper.",
-    "version": "0.10.0",
+    "version": "0.11.0",
     "repository": "https://github.com/sapran/cc-goodies"
   },
   "plugins": [
@@ -28,7 +28,7 @@
     {
       "name": "shell-guard",
       "source": "./plugins/shell-guard",
-      "description": "Block a small set of catastrophic shell commands (rm -rf / or ~, dd/redirect to a disk, mkfs, fork bombs, curl|sh, chmod 777, eval, sudo, reboot/shutdown) before they run. Catches plain-form accidents; fail-open, configurable."
+      "description": "Stop a small set of dangerous shell commands before they run: the catastrophic ones outright, the rest by asking first. Names the rule it matched and, where one exists, the safe alternative. Catches plain-form accidents; fail-open, configurable."
     },
     {
       "name": "rtk-hook",
@@ -43,7 +43,7 @@
     {
       "name": "project-scope",
       "source": "./plugins/project-scope",
-      "description": "Scope a project's plugins, MCP servers and skills to a stated theme — consented project-scope install/uninstall plus a leaner .claude/settings.json (skill overrides, denied MCPs, context budget). Auto-activating skill plus a /project-scope command."
+      "description": "Scope a project's plugins, MCP servers and skills to a stated theme: consented per-bucket install/uninstall plus a leaner .claude/settings.json."
     },
     {
       "name": "gpt-search",
