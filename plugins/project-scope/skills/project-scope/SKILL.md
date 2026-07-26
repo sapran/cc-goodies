@@ -138,7 +138,7 @@ For each of the ~15 filtered marketplace plugins, classify as **propose-install*
 
 #### Conflict rule (applies to all passes)
 
-If the user's global `~/.claude/CLAUDE.md` (or `~/.claude/rules/*.md`) declares a resource as authoritative or always-on (e.g. mempalace as cross-session memory, ollama for token-saving, caveman at session start), prefer **keep** and never silently remove.
+If the user's global `~/.claude/CLAUDE.md` (or `~/.claude/rules/*.md`) declares a resource as authoritative or always-on (e.g. a named memory store for cross-session state, a local model endpoint for token-saving, an output style applied at session start), prefer **keep** and never silently remove.
 
 #### Always keep (never propose removing)
 
