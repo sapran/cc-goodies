@@ -32,8 +32,11 @@ attention reason, for `Stop` the core is a sign-off.
 
 The phrase pools SHALL be selected by the context of the event so that tone fits the
 situation. For `Notification`, the cue SHALL be routed by the message subtype: a
-permission request, an idle/waiting-for-input prompt, or an unrecognised message
-(neutral fallback). For `Stop`, the cue SHALL be routed by turn length when that
+permission request, an idle/waiting-for-input prompt, a background agent reporting that it has
+completed, a background agent reporting that it needs input, or an unrecognised message
+(neutral fallback). Routing SHALL prefer the payload's explicit notification type where one is
+provided, falling back to matching the message wording, so that a payload without a type field
+still routes correctly. For `Stop`, the cue SHALL be routed by turn length when that
 information is available (short vs long).
 
 #### Scenario: Permission request routing
@@ -46,6 +49,18 @@ information is available (short vs long).
 
 - **WHEN** a `Notification` message indicates Claude is waiting for input
 - **THEN** the cue uses the gentle pool (e.g. "Whenever you're ready — I'm waiting for your input")
+
+#### Scenario: Background agent completion routing
+
+- **WHEN** a `Notification` reports that a background agent has finished or failed
+- **THEN** the cue announces that agent's completion rather than falling through to the generic
+  attention phrase
+
+#### Scenario: Background agent needs-input routing
+
+- **WHEN** a `Notification` reports that a background agent needs input
+- **THEN** the cue uses the brisk pool and announces which agent is asking, rather than falling
+  through to the generic attention phrase
 
 #### Scenario: Unrecognised message fallback
 
@@ -158,3 +173,4 @@ least the duration threshold and the garnish frequency, each with a sensible def
 - **WHEN** none of the new environment variables are set
 - **THEN** the plugin uses built-in defaults (garnish ≈40%, threshold ≈20s) and works
   without any configuration
+

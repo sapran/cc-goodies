@@ -16,7 +16,10 @@ dispatches one or more subagents and pauses while they run. A burst of dispatche
 within a configurable debounce window (default approximately 10 seconds) SHALL collapse to
 exactly one spoken cue; a later dispatch separated from the previous one by more than the
 window MAY speak again. The cue SHALL announce that work continues (the main agent is not
-finished), distinguishing this state by ear from the turn-end "your turn" cue.
+finished), distinguishing this state by ear from the turn-end "your turn" cue. When agent
+naming is enabled and a purpose can be resolved, the cue SHALL also name the delegated work as
+defined by the `voice-notify-agent-identity` capability; when naming is disabled or no purpose
+can be resolved, the cue SHALL be the anonymous form.
 
 #### Scenario: First dispatch speaks
 
@@ -36,27 +39,11 @@ finished), distinguishing this state by ear from the turn-end "your turn" cue.
 - **THEN** the plugin MAY speak the subagent-working cue again (a new burst), not stay
   permanently silent for the rest of the turn
 
-### Requirement: Silence on subagent completion
+#### Scenario: Collapsed burst is still named
 
-A subagent completing (`SubagentStop`) SHALL NOT produce a spoken cue. The event SHALL,
-however, update the ephemeral in-flight accounting (recording that one subagent has finished),
-so that a later `Stop` can tell whether work is still outstanding. Per-completion cues remain
-suppressed so a large fan-out does not become chatter.
-
-#### Scenario: Subagent finish is silent
-
-- **WHEN** a single subagent finishes
-- **THEN** no cue is spoken for that completion, and the in-flight accounting records the finish
-
-#### Scenario: Many parallel finishes stay silent
-
-- **WHEN** several parallel subagents finish in quick succession
-- **THEN** no completion cues are spoken for any of them
-
-#### Scenario: Duplicate completion counts once
-
-- **WHEN** `SubagentStop` is observed more than once for the same `agent_id`
-- **THEN** the accounting records that agent as finished exactly once (idempotent)
+- **WHEN** several subagents are dispatched within the debounce window and naming is enabled
+- **THEN** the single spoken cue reflects the whole burst (count and purpose) rather than only
+  the first agent's dispatch
 
 ### Requirement: Turn-end cue reserved for true turn-end
 
@@ -112,21 +99,23 @@ the prosody pause SHALL never be voiced as literal text.
 
 ### Requirement: Ephemeral, self-cleaning debounce and active-subagent state
 
-State used to debounce dispatch cues or to track in-flight subagents SHALL be ephemeral
+State used to debounce dispatch cues, to track in-flight subagents, to record dispatched agents'
+purposes, to remember per-turn cue bookkeeping, or to serialise speech SHALL be ephemeral
 per-session state under the system temp directory, written create-only or overwritten within
-the plugin's own logic. In-flight tracking SHALL use two per-session marker directories — one
-for subagent spawns, one for completions — such that concurrent asynchronous hooks never
-perform a read-modify-write on shared state. The plugin SHALL write nothing outside the system
+the plugin's own logic. State that concurrent asynchronous hooks may write SHALL be structured
+so that no read-modify-write on shared state is required — marker directories with uniquely
+named entries, or create-only directories. The plugin SHALL write nothing outside the system
 temp directory and its own plugin directory, so that `/plugin uninstall` remains a complete
-revert with no teardown command. Stale markers (older than a configurable TTL) SHALL be pruned
+revert with no teardown command. Stale entries (older than a configurable TTL) SHALL be pruned
 so that a subagent that never reports completion cannot wedge the in-flight count; missing or
 corrupt state SHALL degrade harmlessly (treated as "no recent cue" / "none in-flight" /
 "speak"), never erroring.
 
 #### Scenario: State lives only in temp
 
-- **WHEN** the plugin records a spawn or a completion
-- **THEN** the only files written are under the system temp directory, keyed to the session
+- **WHEN** the plugin records a spawn, a completion, an agent's purpose, or takes the speech lock
+- **THEN** the only files or directories written are under the system temp directory, keyed to
+  the session
 
 #### Scenario: Stale or missing state is harmless
 
@@ -141,6 +130,11 @@ corrupt state SHALL degrade harmlessly (treated as "no recent cue" / "none in-fl
 - **THEN** the marker is pruned at `Stop` and does not keep the plugin in a permanent
   "still working" state
 
+#### Scenario: Stale purpose record is pruned
+
+- **WHEN** a recorded agent purpose is older than the configured TTL
+- **THEN** it is pruned and does not accumulate across sessions
+
 ### Requirement: Subagent cue configuration is env-var only and degrades cleanly
 
 All behaviour SHALL be governed by environment variables following the existing precedence
@@ -148,46 +142,67 @@ All behaviour SHALL be governed by environment variables following the existing 
 existing global mute (`CLAUDE_VOICE_NOTIFY=off`), the non-macOS no-op (no `say`), and the
 missing-`jq` fallback, exactly as the existing events do. The dedicated subagent mute
 (`CLAUDE_VOICE_NOTIFY_SUBAGENT=off`) SHALL disable the whole subagent path — the dispatch cue,
-the in-flight accounting, and the waiting cue — so that `Stop` behaves exactly as it did before
-in-flight tracking existed. A TTL knob (`CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL`, seconds) SHALL
-govern stale-marker pruning with a sensible default so the feature works with no configuration.
+the in-flight accounting, the completion cues, the drain roll-up, and the waiting cue — so that
+`Stop` behaves exactly as it did before in-flight tracking existed. A TTL knob
+(`CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL`, seconds) SHALL govern stale-marker pruning with a sensible
+default so the feature works with no configuration.
 
 #### Scenario: Global mute wins
 
 - **WHEN** `CLAUDE_VOICE_NOTIFY=off` is set
-- **THEN** no dispatch or waiting cue is spoken, regardless of the new logic
+- **THEN** no dispatch, completion, roll-up, or waiting cue is spoken, regardless of the new
+  logic
 
 #### Scenario: Subagent mute disables the whole path
 
 - **WHEN** `CLAUDE_VOICE_NOTIFY_SUBAGENT=off` is set but the global mute is not
-- **THEN** no spawn/done markers are written, no waiting cue is spoken, and `Stop` speaks its
-  turn-end sign-off exactly as before in-flight tracking existed, while turn-end and
-  notification cues still work
+- **THEN** no spawn/done/purpose records are written, no completion, roll-up, or waiting cue is
+  spoken, and `Stop` speaks its turn-end sign-off exactly as before in-flight tracking existed,
+  while turn-end and notification cues still work
 
 #### Scenario: Non-macOS no-op preserved
 
 - **WHEN** the `say` command is unavailable
-- **THEN** the `subagent-stop` event exits cleanly without speaking or erroring
+- **THEN** the `subagent-stop` and agent-result events exit cleanly without speaking or erroring
 
 #### Scenario: Defaults require no configuration
 
 - **WHEN** none of the new environment variables are set
-- **THEN** the plugin uses built-in defaults (TTL ≈3600s, subagent path on) and works without
-  any configuration
+- **THEN** the plugin uses built-in defaults (TTL ≈3600s, subagent path on, naming on, name cap
+  3) and works without any configuration
 
 ### Requirement: In-flight subagent accounting
 
-The plugin SHALL maintain a per-session count of in-flight subagents so the `Stop` cue can tell
-whether background work is still outstanding. Each subagent dispatch (`PreToolUse` on the
-`Agent` tool) SHALL record one spawn; each subagent completion (`SubagentStop`) SHALL record
-one completion keyed by the event's unique `agent_id`. The in-flight count SHALL be
+The plugin SHALL maintain a per-session view of in-flight subagents so the `Stop` cue can tell
+whether background work is still outstanding, and so completion cues can be capped and rolled
+up. When the hook payload provides the harness's in-flight task list, that list SHALL be the
+authoritative source: in-flight is the number of subagent entries in it, excluding the entry for
+the agent whose completion is being handled. When the payload does not provide that list, the
+plugin SHALL fall back to marker counting: each subagent dispatch records one spawn, each
+completion records one completion keyed by the event's unique `agent_id`, and in-flight is
 `max(0, spawns − completions)` over the non-stale markers, clamped so it never goes negative.
 The spawn record SHALL be written for every dispatch, independent of whether the dispatch cue
 itself is debounced into silence.
 
+#### Scenario: Task list is authoritative when present
+
+- **WHEN** a completion event carries the harness's in-flight task list
+- **THEN** in-flight is derived from that list rather than from marker counts
+
+#### Scenario: Finishing agent is excluded from its own count
+
+- **WHEN** a completion event carries a task list that still contains the finishing agent's own
+  entry
+- **THEN** that entry is excluded, so an agent is never counted as waiting on itself
+
+#### Scenario: Falls back to markers when the list is absent
+
+- **WHEN** a completion or turn-end event carries no in-flight task list
+- **THEN** the marker counting is used and behaves exactly as before
+
 #### Scenario: Dispatch increments, completion decrements
 
-- **WHEN** two subagents are dispatched and one later completes
+- **WHEN** two subagents are dispatched and one later completes, with no task list available
 - **THEN** the in-flight count is one (two spawns minus one completion)
 
 #### Scenario: Debounced dispatch still counts
