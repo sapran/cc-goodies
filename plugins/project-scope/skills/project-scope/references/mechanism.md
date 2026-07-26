@@ -24,6 +24,9 @@ For surfaces with **no** project-install primitive — user-level standalone ski
 | Plugin-provided skills / MCPs | (governed by the plugin) | Follow their parent plugin's project install/uninstall — install the plugin to get them, uninstall to remove them. No separate key. |
 | Skill-listing context budget | `skillListingBudgetFraction: 0.01` (1%) … `0.05` (5%) | Fraction of context window reserved for the skill listing. Lower = aggressive truncation = leaner per-turn cost. Higher = full descriptions visible = better skill matching. Default 0.01. |
 
+`.claude/settings.local.json` (the permission allowlist) is a separate concern — read it only
+to confirm it exists, never write to it.
+
 ## npm-based skills / tools
 
 If a project uses any npm-based skills or tools, apply the **same project-scoped install/uninstall principle**: manage them with project-local `npm install <pkg>` / `npm uninstall <pkg>` (which writes the project's `package.json`/lockfile), never a global enable/disable toggle. This skill does not currently run an npm discovery pass; if such tools are in play, treat them under install/uninstall consistent with Paradigm 1.
@@ -49,3 +52,100 @@ If a project uses any npm-based skills or tools, apply the **same project-scoped
 The authoritative installed/downloaded record is `~/.claude/plugins/installed_plugins.json` (`.plugins` object). For entries de-listed from the cache, the fallback is the on-disk manifest under `~/.claude/plugins/marketplaces/<marketplace>/.../plugin.json`.
 
 Do **not** touch `~/.claude/settings.json` (global) — other projects must keep their full surface area.
+
+## Phase 1 — inventory subagent
+
+Dispatch inventory to a subagent (general-purpose is sufficient) rather than running it in the
+main session. A fresh subagent has no memory of this skill being loaded, so the dispatch prompt
+must be self-contained: pass it the clarified theme, the refreshed catalog-cache path (above),
+and this file's own path so it can re-read any section below itself.
+
+### What the subagent gathers, per tier
+
+**1A — currently active.** Run in parallel: `claude plugins list` (installed plugins, scope,
+enable state); `claude mcp list` (CC-native MCP servers — does not enumerate Claude Desktop app
+MCPs); the Claude Desktop config, if present:
+
+```bash
+test -f "$HOME/Library/Application Support/Claude/claude_desktop_config.json" && \
+  jq -r '.mcpServers | keys[]?' "$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+```
+
+Absent or unreadable (Linux, fresh macOS, non-Desktop install) → skip silently, CC-native
+inventory is sufficient. Two MCP surfaces share the `deniedMcpServers` denylist under different
+`serverName` forms: local Desktop config keys (bare key, e.g. `codex`) and claude.ai remote
+integrations (never in the Desktop config or `claude mcp list`; detect them by scanning the
+subagent's own available-tools listing for the `mcp__claude_ai_<Name>__*` prefix, then
+reverse-derive `serverName` as `"claude.ai <Name>"`). Also inventory any other
+`mcp__<server>__*` tool not produced by an enabled plugin (no `mcp__plugin_*` prefix). A Desktop
+name colliding with a user-scope MCP of the same `serverName` is one denylist entry, not two.
+The available-skills list is in the session-start system-reminder; skills with a `plugin:`
+prefix are governed by their plugin's enable state.
+
+**1B — installed but disabled.**
+
+```bash
+claude plugins list | awk '/❯/{id=$2} /Status:.*disabled/{print id}' | sort -u
+```
+
+These are low-friction install candidates (already downloaded — `claude plugins install <id>
+--scope project` scopes them in with no marketplace fetch). Fetch descriptions/categories/
+install-counts/token-cost in one cache query, never per-plugin file reads except for
+cache-misses. Read all descriptions — do not pre-filter by id keyword-match; plugin ids and
+theme vocabulary often diverge (theme "improve performance" vs. plugin id `skill-creator`).
+
+Resolve token cost with the three-step procedure above (exact → family → unavailable). State
+your own model id as a literal first — same self-knowledge constraint as any other tool call,
+nothing on disk or in the environment provides it:
+
+```bash
+CAT="$HOME/.claude/plugins/plugin-catalog-cache.json"
+MODEL="claude-sonnet-5"          # <- your own self-reported model id, stated above, not detected
+FAMILY=$(printf '%s' "$MODEL" | cut -d- -f2)
+jq -r --argjson ids '["feature-dev@claude-plugins-official","mcp-apps@claude-plugins-official"]' \
+      --arg model "$MODEL" --arg family "$FAMILY" '
+  .catalog.plugins as $p | $ids[] | . as $id | ($p[$id] // {}) as $e |
+  ($e.tokens // {}) as $tok |
+  ( if ($tok | has($model)) then {aon: $tok[$model].always_on, note: ""}
+    elif ($tok | keys | map(select(test($family))) | length) > 0 then
+      ($tok | keys | map(select(test($family))) | .[0]) as $fk |
+      {aon: $tok[$fk].always_on, note: " (via \($fk), not \($model))"}
+    else {aon: null, note: ""}
+    end
+  ) as $res |
+  "\($id)\t[\($e.marketplace_entry.category // "?")]\taon=\($res.aon // "unavailable")\($res.note)\t\($e.marketplace_entry.description // "NOT IN CATALOG")"
+' "$CAT"
+```
+
+A row's `aon=` value carries its own disclosure: a bare number is an exact match; `(via <key>,
+not <model>)` is a family match — always name it; `unavailable` means neither matched — never
+treat it as zero cost. `NOT IN CATALOG` rows (de-listed plugins) fall back to reading that
+single plugin's `plugin.json` manifest on disk.
+
+**1C — available in marketplace.** The cache holds ~200+ entries — reading all of them inside
+this subagent call is fine; it's discarded when the subagent returns, and nothing here is
+printed through the parent session's tool output (the failure mode this file's iron rule warns
+about is emitting the pool *to the parent*, not reading it internally). Read every entry's
+name/description/category/`unique_installs`, exclude ids already covered by 1A/1B, and judge
+relevance against the theme yourself — no stopword tokenization, no fixed slice count. A
+natural cut is usually well under 20 candidates, but let the theme decide the size; sort
+survivors by `unique_installs`. If nothing is genuinely relevant, say so plainly rather than
+padding the return with marginal candidates.
+
+### Return contract
+
+One row per candidate across all three tiers — this is what the subagent returns to the main
+session; it does not classify keep/remove/install/skip, that judgment stays with the main
+session applying the theme and the conflict/always-keep rules:
+
+| Field | Meaning |
+|---|---|
+| `tier` | `1A` (active) / `1B` (installed-disabled) / `1C` (marketplace-available) |
+| `surface` | `plugin` / `skill` / `mcp` |
+| `id` | plugin id (`name@marketplace`), skill name, or MCP `serverName` |
+| `state` | `active` / `disabled` / `available` |
+| `description` | one-line, from the catalog entry or manifest |
+| `always_on_tokens` | from `.tokens["<model>"].always_on`, resolved per the three-step procedure, with its disclosure note |
+| `unique_installs` | marketplace tier only |
+| `bundles_mcp` | boolean — plugin ships its own MCP server |
+| `category` | catalog category, if present |

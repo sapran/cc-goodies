@@ -22,7 +22,8 @@ Two entry points, same workflow:
   "reduce per-turn token cost here"). Skills are model-invoked, so you don't have to remember
   the command.
 
-If you don't give a theme, it asks for one before doing anything.
+If the theme or your starting point is ambiguous, it asks — one direct question at a time —
+before doing anything; a clear theme skips straight to inventory.
 
 ## What it does
 

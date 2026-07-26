@@ -142,9 +142,11 @@ Grouped by the work unit, not the plugin. None scaffolded; each is a candidate
    two alias commands or document the intentional omission as a house rule (CMD-3).
 5. **`voice-notify-hook-timeouts`** — add explicit `"timeout"` to voice-notify's two hooks to
    match the sibling pattern (git-guard 10 / shell-guard 10 / rtk-hook 15) (HOOK-8).
-6. **`split-project-scope-skill`** *(optional)* — move the Mechanism reference tables and the
+6. ~~**`split-project-scope-skill`** *(optional)* — move the Mechanism reference tables and the
    Phase-3 menu tables in `project-scope/SKILL.md` (3,996 words) into `references/` to get the
-   always-loaded body under the 3,000-word guideline (SKILL-5).
+   always-loaded body under the 3,000-word guideline (SKILL-5).~~ **Done** —
+   `restructure-project-scope-skill` rewrote `SKILL.md` to a router with no restated reference
+   content; the Mechanism and Phase-3 tables now live solely in `references/`.
 
 **Nit (decide & document, likely WONTFIX):**
 
