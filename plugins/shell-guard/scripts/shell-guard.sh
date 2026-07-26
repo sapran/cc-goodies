@@ -14,7 +14,10 @@
 # "ask" JSON on stdout, exit 0) for harm that is reversible and disclosed in
 # the command text itself — truncating a file to empty (`: >`), `chmod 777`,
 # `eval` (without a fetched payload), and privilege escalation (`sudo`/`doas`/
-# …). Everything else passes straight through.
+# …). Everything else passes straight through. A compound command (`;`/`&&`/
+# `||`/pipes/newlines) is scanned to completion before any decision is made —
+# deny > ask > allow — so a deny anywhere wins regardless of where it sits;
+# only a deny short-circuits early, since nothing later could outrank it.
 #
 # Threat model: an *aligned* agent that emits a catastrophic command BY ACCIDENT
 # in plain form (`rm -rf /`). This is a convenience guard, not a sandbox — it does
@@ -91,6 +94,21 @@ FORK_RE='([A-Za-z_:][A-Za-z0-9_:]*)\(\)[[:space:]]*\{(.*)\}'
 # single `>` redirect. (A bare `> file` is an ordinary redirect — not matched.)
 TRUNC_RE='^[[:space:]]*:[[:space:]]*>([^>]|$)'
 
+# --- Decision-resolution state ------------------------------------------------
+# SEVERITY RESOLUTION: deny > ask > allow, resolved ONCE after the *entire*
+# command has been scanned — not by whichever arm is matched first. deny()
+# still short-circuits the scan immediately (via `return 2` propagating up to
+# an `exit 2` in the main loop below): deny is already the maximum severity, so
+# nothing later in the command could change the outcome. ask() is different —
+# it must NOT exit, or a deny-class arm in a later segment would never be seen
+# (this was the exact regression: an early ask() used to `exit 0` mid-scan).
+# Instead ask() records the pending decision here; only the FIRST ask recorded
+# survives (ASK_PENDING guards against a later ask overwriting it), and it is
+# emitted — if the scan reaches the end without ever hitting a deny — by the
+# one `jq` call at the bottom of the script.
+ASK_PENDING=0
+ASK_REASON=""
+
 # --- Helpers ----------------------------------------------------------------
 # $1 = axis-1 class, shared by deny() and ask() below (design.md's AXIS 1,
 #      `alternative: named|none` — independent of the `channel: deny|ask` axis
@@ -123,14 +141,20 @@ deny() {
 ask() {
   # ASK-channel arm (AXIS 2, guard-ask-escalation): harm that is reversible and
   # fully disclosed in the command text a human would read at a permission
-  # prompt (see design.md Decision D1). Escalates instead of blocking: prints
-  # `hookSpecificOutput.permissionDecision: "ask"` JSON on STDOUT and exits 0,
-  # carrying the exact same axis-1 class/reason/alt message substance deny()
-  # uses — same escape hatch, same variants clause — so the two channels
-  # differ only in delivery mechanism, never in what they tell the human. When
-  # nobody is there to answer the prompt (headless/background), the harness
-  # itself degrades this to a blocked command — verified, see design.md
-  # Decision D3. This function always exits the whole script; it never returns.
+  # prompt (see design.md Decision D1). Carries the exact same axis-1 class/
+  # reason/alt message substance deny() uses — same escape hatch, same
+  # variants clause — so the two channels differ only in delivery mechanism,
+  # never in what they tell the human. When nobody is there to answer the
+  # prompt (headless/background), the harness itself degrades this to a
+  # blocked command — verified, see design.md Decision D3.
+  #
+  # SEVERITY RESOLUTION: this function does NOT exit or print. It records the
+  # pending ask (first one wins — a later ask must not overwrite an earlier
+  # arm's reason) and returns, so the caller keeps scanning the rest of the
+  # command: a deny-class arm anywhere else — even a later segment — must
+  # still win. The recorded message is only emitted, once, at the very end of
+  # the script, and only if nothing denied along the way.
+  [ "$ASK_PENDING" = 1 ] && return 0
   class="$1"; reason="$2"; alt="${3:-}"
   msg="🟡 shell-guard: this needs your OK — $reason."
   case "$class" in
@@ -144,9 +168,9 @@ ask() {
    To run it anyway, paste into the prompt (! runs it in your shell):
 ! $cmd
    Or set SHELL_GUARD_DISABLE=1 / see /shell-guard."
-  jq -n --arg reason "$msg" \
-    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask",permissionDecisionReason:$reason}}'
-  exit 0
+  ASK_PENDING=1
+  ASK_REASON="$msg"
+  return 0
 }
 
 # Is this argument a catastrophic target — `/`, `$HOME`/`~`, a top-level system
@@ -265,18 +289,21 @@ eval_stage() {
       # AXIS 2 channel-selection refinement (guard-ask-escalation, design.md
       # Decision D1's eval-exception): a fetched payload isn't visible to a
       # human at an ask prompt — same "can't approve what you can't see"
-      # principle as detect_net_pipe's curl|sh arm below — so check the FULL
-      # original segment ($seg, set by evaluate_segment) for a download word,
-      # not just this stage's own tokens: the stage splitter further down
-      # splits on `(`/`)`, so `eval "$(curl …)"` lands its `curl` in a
-      # DIFFERENT stage than this one. Detection is unchanged — this only
-      # decides which channel the already-matched eval arm resolves to.
-      case "$seg" in
-        *curl*|*wget*|*fetch*)
-          deny named "eval — arbitrary code execution" "run the intended command directly, without the eval indirection"; return 2 ;;
-        *)
-          ask named "eval — arbitrary code execution" "run the intended command directly, without the eval indirection" ;;
-      esac
+      # principle as detect_net_pipe's curl|sh arm below — so check the WHOLE
+      # ORIGINAL command ($cmd, not just this stage or this segment) for a
+      # download word: the fetch can be split from its eval across a `;`/
+      # `&&`/`||`/newline, or indirected through a variable (`x=curl; eval
+      # "$($x …)"`), so a per-segment check misses it (that was the bug).
+      # has_download_word() is word-anchored, not a raw substring match, so
+      # "curling"/"wgettable" stay ask — and case-insensitive, since macOS's
+      # case-insensitive filesystem means `CURL` resolves to the same binary.
+      # Detection of `eval` itself is unchanged — this only decides which
+      # channel the already-matched eval arm resolves to.
+      if has_download_word "$cmd"; then
+        deny named "eval — arbitrary code execution" "run the intended command directly, without the eval indirection"; return 2
+      else
+        ask named "eval — arbitrary code execution" "run the intended command directly, without the eval indirection"
+      fi
       ;;
     chmod)
       for a in "$@"; do
@@ -313,6 +340,36 @@ detect_net_pipe() {
 $(printf '%s\n' "$1" | awk '{gsub(/\|/,"\n")}1')
 EOF_NET
   return 0
+}
+
+# Whole-command scope check for the eval/download exception above: is
+# curl/wget/fetch present anywhere in $1 as an ISOLATED word — never a raw
+# substring match, so "curling"/"wgettable" don't match — case-insensitively
+# (bash-3.2-compatible: `tr`, not `${x,,}`)? Splits on the same shell
+# metacharacters detect_net_pipe uses (stage boundaries), PLUS `=` within each
+# resulting stage, so `x=curl` (assign, then reference the variable — the
+# assignment is otherwise a single token with nothing after it, invisible to a
+# leading-command-word check) is still caught without resolving what the
+# variable expands to at runtime. Unlike detect_net_pipe, every word in a
+# stage is checked, not just its leading command word, since this check is
+# about a download word appearing ANYWHERE in the text an eval will run —
+# not about identifying which stage is itself a running command.
+has_download_word() {
+  while IFS= read -r stage; do
+    [ -n "$stage" ] || continue
+    stage="${stage//=/ }"   # VAR=curl -> VAR curl, so the value is its own word
+    # shellcheck disable=SC2086
+    set -- $stage
+    for w in "$@"; do
+      case "$w" in */*) w="${w##*/}" ;; esac
+      w="${w#\\}"; w="${w//\"/}"; w="${w//\'/}"
+      w=$(printf '%s' "$w" | tr '[:upper:]' '[:lower:]')
+      case "$w" in curl|wget|fetch) return 0 ;; esac
+    done
+  done <<EOF_DL
+$(printf '%s\n' "$1" | awk '{gsub(/&&|\|\||;/,"\n"); gsub(/[|&(){}]/,"\n"); gsub(/\140/,"\n")}1')
+EOF_DL
+  return 1
 }
 
 # Evaluate ONE command segment. Returns 2 (and prints) to block, 0 to allow.
@@ -360,7 +417,11 @@ EOF_STAGE
 
 # Split the command on shell separators (&&, ||, ;) and physical newlines, then
 # judge each piece independently. Best-effort: exotic quoting can hide an op,
-# which fails open — acceptable for a convenience guard.
+# which fails open — acceptable for a convenience guard. A deny anywhere exits
+# immediately (max severity — nothing later could change the outcome). An ask
+# does NOT exit here (see ask()'s own comment) — the loop runs to completion
+# so a deny in a LATER segment still wins; only once every segment has been
+# scanned clean of any deny do we emit whichever ask was recorded first.
 while IFS= read -r seg; do
   [ -n "$seg" ] || continue
   evaluate_segment "$seg" || exit 2
@@ -368,4 +429,8 @@ done <<EOF
 $(printf '%s\n' "$cmd" | awk '{gsub(/&&|\|\||;/,"\n")}1')
 EOF
 
+if [ "$ASK_PENDING" = 1 ]; then
+  jq -n --arg reason "$ASK_REASON" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask",permissionDecisionReason:$reason}}'
+fi
 exit 0

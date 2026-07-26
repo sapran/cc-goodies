@@ -32,6 +32,11 @@
 # the guard's ENVIRONMENT (read via the env var, not the command text) — it is
 # stripped and exported for that one case only, mirroring git-guard's run.sh.
 #
+# A literal `\n` (backslash-n, two characters) anywhere in the command column
+# is converted to a real embedded newline just before the JSON is built — the
+# only way a line-oriented cases.tsv can express a command that genuinely
+# spans physical lines (e.g. a fetch split from its `eval` by a line break).
+#
 # Usage: bash plugins/shell-guard/tests/run.sh   (exits non-zero on any failure)
 
 set -u
@@ -56,8 +61,8 @@ trap 'rm -f "$outfile" "$errfile"' EXIT
 # produce no reason text; the EXTRA-arm case `extra_pattern` is asserted
 # separately below since it is neither class — see the "A pattern of unknown
 # severity" spec requirement).
-none_ids=" rm_root rm_tilde rm_home rm_nopreserve rm_fr_usr rm_r_force_etc rm_glob_home dd_disk2 redirect_disk0 mkfs_sda wipefs_sdb diskutil_erase reboot shutdown forkbomb timeout_rm env_rm nice_rm compound_rm pipe_rm subshell_rm "
-named_ids=" sudo_rm sudo_apt doas_reboot eval_curl eval_plain chmod_777 chmod_R_0777 trunc_colon curl_bash wget_sh "
+none_ids=" rm_root rm_tilde rm_home rm_nopreserve rm_fr_usr rm_r_force_etc rm_glob_home dd_disk2 redirect_disk0 mkfs_sda wipefs_sdb diskutil_erase reboot shutdown forkbomb timeout_rm env_rm nice_rm compound_rm pipe_rm subshell_rm ask_deny_chmod_rm ask_deny_trunc_mkfs ask_deny_sudo_rm deny_ask_rm_chmod deny_ask_mkfs_sudo "
+named_ids=" sudo_rm sudo_apt doas_reboot eval_curl eval_plain chmod_777 chmod_R_0777 trunc_colon curl_bash wget_sh ask_ask_first_wins ask_only_no_deny eval_split_semi eval_split_andand eval_split_newline eval_multiline_paren eval_var_indirect eval_fetch_then_cat eval_curling_benign eval_wgettable_benign eval_upper_curl "
 
 # The specific safe-alternative substring each `alternative: named` id must
 # carry — one entry per arm (sudo/doas share the privilege-escalation arm but
@@ -65,9 +70,11 @@ named_ids=" sudo_rm sudo_apt doas_reboot eval_curl eval_plain chmod_777 chmod_R_
 # regardless of which channel — deny vs ask — their download-word check picks).
 alt_substring() {
   case "$1" in
-    sudo_rm|sudo_apt)         printf '%s' "without \`sudo\`" ;;
+    sudo_rm|sudo_apt|ask_ask_first_wins|ask_only_no_deny)
+                              printf '%s' "without \`sudo\`" ;;
     doas_reboot)              printf '%s' "without \`doas\`" ;;
-    eval_curl|eval_plain)     printf '%s' "without the eval indirection" ;;
+    eval_curl|eval_plain|eval_split_semi|eval_split_andand|eval_split_newline|eval_multiline_paren|eval_var_indirect|eval_fetch_then_cat|eval_curling_benign|eval_wgettable_benign|eval_upper_curl)
+                              printf '%s' "without the eval indirection" ;;
     chmod_777|chmod_R_0777)   printf '%s' "chmod 755" ;;
     trunc_colon)              printf '%s' "printf '' >" ;;
     curl_bash|wget_sh)        printf '%s' "download to a file" ;;
@@ -129,6 +136,15 @@ while read -r id expect cwd command; do
   case "$cmd" in
     SHELL_GUARD_EXTRA_PATTERNS=*\ *) envassign="${cmd%% *}"; cmd="${cmd#* }" ;;
   esac
+
+  # cases.tsv is line-oriented (one case per physical line), so a case that
+  # needs to test a REAL embedded newline in the command (e.g. a fetch split
+  # from its `eval` across a line break) can't just put one in the row. A
+  # literal two-char `\n` in the command column is converted to an actual
+  # newline here, right before the JSON is built — the guard script itself
+  # only ever sees a real newline, same as it would from a live multi-line
+  # Bash tool call.
+  cmd="${cmd//\\n/$'\n'}"
 
   json=$(MSG="$cmd" CWDV="$cwdv" jq -nc \
     '{tool_name:"Bash",tool_input:{command:env.MSG},cwd:env.CWDV}')
