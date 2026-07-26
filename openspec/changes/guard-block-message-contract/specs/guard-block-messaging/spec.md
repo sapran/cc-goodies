@@ -28,37 +28,44 @@ currently fails this (`"matches a configured block pattern"`).
   destination-less push routing rather than an explicit refspec — the mechanism that
   resolved it (e.g. `push.default=upstream`, `remote.<remote>.push`)
 
-### Requirement: Irreversibility framing is reserved for commands with no safe variant
+### Requirement: Irreversibility framing is reserved for the `alternative: none` class
 
 A block message SHALL carry explicit irreversibility framing (a warning that the action is
-destructive and cannot be undone) only for commands in the catastrophic class — those for
-which no narrower or reparameterized form of the same command achieves a plausible
-legitimate goal safely. The catastrophic class comprises: `rm` recursive delete of a
-protected path; `dd` onto a raw disk device; a `>` redirect onto a raw disk device; `mkfs`
-/ `wipefs` / `newfs`; destructive `diskutil` (`eraseDisk`, `eraseVolume`, `reformat`,
-`zeroDisk`, `secureErase`, `partitionDisk`, `eraseall`, destructive `apfs` subcommands); a
-fork bomb; system halt/reboot (`reboot`, `shutdown`, `halt`, `poweroff`); and privilege
-escalation (`sudo`, `doas`, `su`, `runuser`, `pkexec`, `gosu`, `sudoedit`, `setpriv`). For
-these arms the message SHALL offer no suggested alternative — only the escape hatch.
+destructive and cannot be undone) only for commands in the `alternative: none` class —
+those for which no narrower or reparameterized form of the same command achieves a
+plausible legitimate goal safely (axis 1's question: does a safe variant of this action
+exist to name in the message? — see `design.md`). The `alternative: none` class comprises:
+`rm` recursive delete of a protected path; `dd` onto a raw disk device; a `>` redirect onto
+a raw disk device; `mkfs` / `wipefs` / `newfs`; destructive `diskutil` (`eraseDisk`,
+`eraseVolume`, `reformat`, `zeroDisk`, `secureErase`, `partitionDisk`, `eraseall`,
+destructive `apfs` subcommands); a fork bomb; and system halt/reboot (`reboot`,
+`shutdown`, `halt`, `poweroff`). For these arms the message SHALL offer no suggested
+alternative — only the escape hatch.
 
-#### Scenario: A catastrophic command keeps the irreversibility warning
+Axis 1 (`alternative: named | none`) is independent of axis 2 (`channel: deny | ask`,
+owned by the sibling `guard-ask-escalation` proposal) — this requirement governs message
+content only and makes no claim about `permissionDecision`.
 
-- **WHEN** a command matching a catastrophic-class arm is blocked
+#### Scenario: An alternative: none command keeps the irreversibility warning
+
+- **WHEN** a command matching an `alternative: none` arm is blocked
 - **THEN** the message states the action is destructive and irreversible, and offers no
   alternative command — only the `!`-paste escape hatch
 
-#### Scenario: A non-catastrophic command does not carry irreversibility framing
+#### Scenario: An alternative: named command does not carry irreversibility framing
 
-- **WHEN** a command matching a hygiene-class arm is blocked
+- **WHEN** a command matching an `alternative: named` arm is blocked
 - **THEN** the message does not claim the action is irreversible
 
-### Requirement: Hygiene commands name a concrete safe alternative
+### Requirement: Commands classed `alternative: named` name a concrete safe alternative
 
-A block message for a command in the hygiene class — one where a narrower parameterization
-or a reviewed multi-step alternative achieves the same plausible legitimate goal safely —
-SHALL name that alternative in the message text. The hygiene class comprises: `chmod
-777`/`0777`; the `: >` truncate-to-empty idiom; `eval`; and a network download piped into
-an interpreter (`curl`/`wget`/`fetch` followed by a shell or language runtime).
+A block message for a command classed `alternative: named` — one where a narrower
+parameterization or a reviewed multi-step alternative achieves the same plausible
+legitimate goal safely — SHALL name that alternative in the message text. The
+`alternative: named` class comprises: `chmod 777`/`0777`; the `: >` truncate-to-empty
+idiom; `eval`; a network download piped into an interpreter (`curl`/`wget`/`fetch`
+followed by a shell or language runtime); and privilege escalation (`sudo`, `doas`, `su`,
+`runuser`, `pkexec`, `gosu`, `sudoedit`, `setpriv`).
 
 #### Scenario: chmod 777 names a narrower mode
 
@@ -82,13 +89,21 @@ an interpreter (`curl`/`wget`/`fetch` followed by a shell or language runtime).
 - **THEN** the message names downloading to a file, reading it, then running it as a
   separate step as the alternative
 
-### Requirement: A pattern of unknown severity is neither catastrophic nor hygiene
+#### Scenario: privilege escalation names running without the prefix
+
+- **WHEN** `sudo` (or `doas`/`su`/`runuser`/`pkexec`/`gosu`/`sudoedit`/`setpriv`) is
+  blocked
+- **THEN** the message names running the command directly, without the
+  privilege-escalation prefix, as the alternative
+
+### Requirement: A pattern of unknown severity is classed under neither axis-1 value
 
 A block from a user-configured `SHELL_GUARD_EXTRA_PATTERNS` entry SHALL NOT carry the
-catastrophic irreversibility framing, because the guard cannot know the severity of a
-user-supplied pattern, and SHALL NOT fabricate a safe alternative it cannot verify. It
-SHALL still name the matched pattern (per the rule-naming requirement above) and carry the
-variants-also-blocked clause and the escape hatch like every other block.
+`alternative: none` irreversibility framing, because the guard cannot know the severity of
+a user-supplied pattern, and SHALL NOT fabricate a safe alternative it cannot verify (it is
+classed neither `alternative: none` nor `alternative: named`). It SHALL still name the
+matched pattern (per the rule-naming requirement above) and carry the variants-also-blocked
+clause and the escape hatch like every other block.
 
 #### Scenario: An EXTRA-pattern block stays neutral
 
@@ -121,14 +136,14 @@ Every block message, regardless of class or which guard produced it, SHALL inclu
 command handed back as a ready-to-paste `!`-prefixed line, and SHALL point at the guard's
 disable mechanism. This requirement is unconditional — no class or arm is exempt.
 
-#### Scenario: A catastrophic block includes the escape hatch
+#### Scenario: An alternative: none block includes the escape hatch
 
-- **WHEN** a catastrophic-class command is blocked
+- **WHEN** an `alternative: none`-class command is blocked
 - **THEN** the message includes the `!`-prefixed re-paste line and the disable pointer
 
-#### Scenario: A hygiene block includes the escape hatch
+#### Scenario: An alternative: named block includes the escape hatch
 
-- **WHEN** a hygiene-class command is blocked
+- **WHEN** an `alternative: named`-class command is blocked
 - **THEN** the message includes the `!`-prefixed re-paste line and the disable pointer
 
 #### Scenario: A git-guard block includes the escape hatch
@@ -160,5 +175,5 @@ pre-change state.
 - **WHEN** shell-guard's message is updated
 - **THEN** it carries the same contract elements git-guard already carries: a
   rule-specific reason, a variants-also-blocked clause, and the escape hatch — with the
-  addition of the catastrophic/hygiene framing split that git-guard, having only one
-  message class, does not need
+  addition of the `alternative: named`/`alternative: none` (axis 1) framing split that
+  git-guard, having only one message class, does not need

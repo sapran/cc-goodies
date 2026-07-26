@@ -61,14 +61,16 @@ consistency and nothing else — its branch/mechanism naming must not be touched
 
 ## What Changes
 
-- **`shell-guard`'s `deny()` gains a per-call-site class** (catastrophic vs. hygiene) that
-  changes the second line of the message: catastrophic call sites keep the
-  `⚠️ IRREVERSIBLE` framing and offer no alternative; hygiene call sites drop that framing
-  and print the specific safe alternative for that arm instead.
+- **`shell-guard`'s `deny()` gains a per-call-site class on axis 1** (`alternative: named`
+  vs. `alternative: none` — see `design.md` for the two-axis vocabulary this proposal
+  shares with the sibling `guard-ask-escalation` proposal) that changes the second line of
+  the message: `alternative: none` call sites keep the `⚠️ IRREVERSIBLE` framing and offer
+  no alternative; `alternative: named` call sites drop that framing and print the specific
+  safe alternative for that arm instead.
 - **The `EXTRA` arm's reason names the literal matched pattern** instead of the generic
-  `"matches a configured block pattern"`. Its framing stays neutral (neither the
-  catastrophic nor a fabricated hygiene alternative) because the guard cannot know the
-  severity of a user-supplied pattern.
+  `"matches a configured block pattern"`. Its framing stays neutral (it claims neither the
+  `alternative: none` irreversibility line nor a fabricated `alternative: named`
+  alternative) because the guard cannot know the severity of a user-supplied pattern.
 - **Every block message (both guards) gains one new line** stating that variants of the
   same command — reordered flags, different quoting, a wrapper prefix, `$HOME` for `~` —
   are also blocked, so the `!`-paste line reads as the only path forward, not a
@@ -83,9 +85,10 @@ consistency and nothing else — its branch/mechanism naming must not be touched
   wrapper/evasion arms race the guards were deliberately rewritten out of in 2026-06.
 - **No `updatedInput` silent rewriting.** Safe alternatives are named in text; the guard
   never substitutes or edits the command it blocked.
-- **Stays on the exit-2 + stderr path.** Tiering catastrophic vs. hygiene arms into
-  `permissionDecision: "deny"` vs. `"ask"` is a separate, not-yet-decided proposal
-  (`guard-ask-escalation`); this change does not touch `permissionDecision` at all.
+- **Stays on the exit-2 + stderr path.** Routing arms by channel (`permissionDecision:
+  "deny"` vs. `"ask"`) is axis 2, a separate, orthogonal, not-yet-decided proposal
+  (`guard-ask-escalation` — see `design.md` for the two-axis cross-reference); this axis-1
+  change does not touch `permissionDecision` at all.
 - **New test coverage: message-content assertions.** Both `tests/run.sh` harnesses
   currently discard stderr (`>/dev/null 2>&1`) and assert only the exit code. This change
   captures stderr and asserts on its content — the reason names the rule, the class
@@ -97,11 +100,11 @@ consistency and nothing else — its branch/mechanism naming must not be touched
 ### Added Capabilities
 
 - `guard-block-messaging`: the shared contract both guards' block messages satisfy — every
-  reason names the rule that matched, catastrophic and hygiene arms are framed
-  differently, a variants-also-blocked clause and the `!`-paste escape hatch are always
-  present, and `git-guard`'s existing branch/mechanism detail is preserved under the same
-  contract. No such capability spec exists yet for either guard's messaging; this is the
-  first.
+  reason names the rule that matched, `alternative: none` and `alternative: named` arms
+  (axis 1 — see `design.md`) are framed differently, a variants-also-blocked clause and the
+  `!`-paste escape hatch are always present, and `git-guard`'s existing branch/mechanism
+  detail is preserved under the same contract. No such capability spec exists yet for
+  either guard's messaging; this is the first.
 
 ## Impact
 
