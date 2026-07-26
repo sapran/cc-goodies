@@ -102,7 +102,7 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 ### Added
 
 - **`statusline` renders the `caveman` plugin's mode badge** (plugin `0.5.1` → `0.6.0`). Claude
-  Code allows only one `statusLine` command, so the [`caveman`](https://github.com/sapran/caveman)
+  Code allows only one `statusLine` command, so the [`caveman`](https://github.com/JuliusBrussee/caveman)
   plugin's own statusline badge and this one previously competed for the single slot — pick this
   statusline and you lost the `[CAVEMAN]` indicator. The enriched second line now ends with the
   caveman badge (and its optional `~NN% saved` suffix) whenever caveman mode is active —
