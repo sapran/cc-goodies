@@ -18,6 +18,7 @@ on stderr (so it stops and tells you, instead of `main` moving). For
 ```text
 ⛔ git-guard: blocked push to protected branch 'main'.
    Protected: main master. Use a feature branch or 'develop'.
+   Variants of this command — different phrasing, flags, or a wrapper prefix that still resolves to the same protected branch — are blocked too.
    To run it anyway, paste into the prompt (! runs it in your shell):
 ! git push origin main
    Or set GIT_GUARD_DISABLE=1 / see /git-guard.
@@ -25,7 +26,10 @@ on stderr (so it stops and tells you, instead of `main` moving). For
 
 The blocked command is always handed back as a ready-to-paste `!`-prefixed line.
 Typed into the Claude Code prompt, the `!` prefix runs it in **your** shell — which
-this hook never gates — so overriding a one-off block is a single copy-paste.
+this hook never gates — so overriding a one-off block is a single copy-paste. A
+differently-phrased commit/merge/push that still resolves to the same protected branch
+is judged the same way, so that paste-line is the only path forward, not one option
+among several.
 
 ## Behavior
 

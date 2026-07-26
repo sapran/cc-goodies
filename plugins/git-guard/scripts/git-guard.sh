@@ -35,6 +35,14 @@
 # Exit codes: 0 = allow (Claude Code runs the command), 2 = block (stderr is fed
 # back to Claude). Any other code is a non-blocking error in the hooks API and
 # would let the command run, so we never use one to deny.
+#
+# `permissionDecision: "ask"` (the harness's richer PreToolUse contract) was
+# evaluated for this guard and deliberately REJECTED — every arm here stays
+# deny-only, unlike the sibling shell-guard, which does split some arms onto
+# an ask channel. Reasoning: openspec/changes/guard-ask-escalation/design.md,
+# Decision D2 (this repo's own no-session-writes-to-main convention, `ask`
+# putting a main-push approval in the same low-friction UI as routine tool
+# approvals, and git-guard having exactly one hazard class to begin with).
 
 set -u
 
@@ -118,6 +126,7 @@ deny() {
   # unmodified tool command, so the line below re-runs exactly what was attempted.
   printf '%s\n' "⛔ git-guard: blocked $1." >&2
   printf '%s\n' "   Protected: $MAIN_BRANCHES. Use a feature branch or 'develop'." >&2
+  printf '%s\n' "   Variants of this command — different phrasing, flags, or a wrapper prefix that still resolves to the same protected branch — are blocked too." >&2
   printf '%s\n' "   To run it anyway, paste into the prompt (! runs it in your shell):" >&2
   printf '%s\n' "! $cmd" >&2
   printf '%s\n' "   Or set GIT_GUARD_DISABLE=1 / see /git-guard." >&2

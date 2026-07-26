@@ -4,9 +4,9 @@
 (primary) cross-checked against Anthropic's official plugin/marketplace docs (validation
 layer, retrieved live 2026-06-21, Claude Code v2.1.x) and this repo's `CLAUDE.md` house
 rules (layered source). **Rubric:** 86 items / 12 dimensions — full machine-readable list
-in [`../openspec/changes/audit-plugin-best-practices/rubric.json`](../openspec/changes/audit-plugin-best-practices/rubric.json),
+in [`../openspec/changes/archive/2026-06-21-audit-plugin-best-practices/rubric.json`](../openspec/changes/archive/2026-06-21-audit-plugin-best-practices/rubric.json),
 abbreviated in [Appendix A](#appendix-a--full-rubric). Full per-item verdicts (8 targets ×
-86 items) in [`verdicts.json`](../openspec/changes/audit-plugin-best-practices/verdicts.json).
+86 items) in [`verdicts.json`](../openspec/changes/archive/2026-06-21-audit-plugin-best-practices/verdicts.json).
 
 > This is a **measurement, not a migration.** No plugin file or `marketplace.json` entry was
 > modified. Findings are triaged into proposed follow-up changes (§6); those are *listed*,
@@ -142,9 +142,11 @@ Grouped by the work unit, not the plugin. None scaffolded; each is a candidate
    two alias commands or document the intentional omission as a house rule (CMD-3).
 5. **`voice-notify-hook-timeouts`** — add explicit `"timeout"` to voice-notify's two hooks to
    match the sibling pattern (git-guard 10 / shell-guard 10 / rtk-hook 15) (HOOK-8).
-6. **`split-project-scope-skill`** *(optional)* — move the Mechanism reference tables and the
+6. ~~**`split-project-scope-skill`** *(optional)* — move the Mechanism reference tables and the
    Phase-3 menu tables in `project-scope/SKILL.md` (3,996 words) into `references/` to get the
-   always-loaded body under the 3,000-word guideline (SKILL-5).
+   always-loaded body under the 3,000-word guideline (SKILL-5).~~ **Done** —
+   `restructure-project-scope-skill` rewrote `SKILL.md` to a router with no restated reference
+   content; the Mechanism and Phase-3 tables now live solely in `references/`.
 
 **Nit (decide & document, likely WONTFIX):**
 
@@ -175,7 +177,7 @@ Against `specs/plugin-best-practice-audit/spec.md`:
 ## Appendix A — full rubric
 
 Abbreviated; canonical machine-readable form in
-[`rubric.json`](../openspec/changes/audit-plugin-best-practices/rubric.json). `docs:` = Anthropic
+[`rubric.json`](../openspec/changes/archive/2026-06-21-audit-plugin-best-practices/rubric.json). `docs:` = Anthropic
 official documentation.
 
 | ID | Dim | Rule (abbrev) | Applies to | Sources | Conflict resolution |

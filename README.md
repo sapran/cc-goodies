@@ -7,7 +7,7 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 | **[voice-notify](plugins/voice-notify)** | Speaks a short, natural, first-person cue (macOS `say`) when Claude needs your attention, hands work to subagents, or finishes a long turn — varied phrasing routed by context, a distinct debounced cue while subagents run, a waiting cue when a turn ends with background subagents still running, quiet on quick turns. |
 | **[statusline](plugins/statusline)** | An enriched two-line statusline: `user@host`, cwd, branch/worktree, task focus, model, effort, context % and rate-limit %. Flip it to a single lean line (cwd, branch, model, context %) at runtime with `/statusline-toggle`. |
 | **[git-guard](plugins/git-guard)** | Blocks accidental commits/merges/pushes to protected branches (`main`/`master`) before they run. One default behaviour plus an optional block-all-push mode; configurable branches. Cross-platform. |
-| **[shell-guard](plugins/shell-guard)** | Blocks a curated set of catastrophic shell commands (`rm -rf /` or `~`, `dd` to a disk, `mkfs`, fork bombs, `curl\|sh`) before they run. Defence in depth over the deny list; configurable. Cross-platform. |
+| **[shell-guard](plugins/shell-guard)** | Stops a curated set of dangerous shell commands before they run: the catastrophic ones outright (`rm -rf /` or `~`, `dd` to a disk, `mkfs`, fork bombs, `curl\|sh`), the rest by asking first (`chmod 777`, `eval`, `sudo`). Defence in depth over the deny list; configurable. Cross-platform. |
 | **[rtk-hook](plugins/rtk-hook)** | Wires RTK (Rust Token Killer) as a managed `PreToolUse` hook to cut output tokens on routine Bash commands. Pause/resume via `/rtk-hook`; no-ops without the `rtk` binary. Cross-platform. |
 | **[session-finalise](plugins/session-finalise)** | An end-of-session checklist that preserves work, then cleans up: commit/stash, durable memory, handoff, tracker updates, scratch-file and worktree removal — confirming every irreversible step. Auto-activates on wrap-up, or run `/session-finalise`. Cross-platform. |
 | **[project-scope](plugins/project-scope)** | Scopes a project's plugins, MCP servers and skills to a stated theme — uninstalls off-theme plugins at project scope, disables user-level skills/MCPs, installs relevant ones, sets the context budget. Every change is consent-gated; project scope only. Auto-activates, or run `/project-scope <theme>`. Cross-platform. |
@@ -18,8 +18,8 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 > **[shell-safety manual](docs/shell-safety.md)** is the map: threat model, what each
 > layer catches and misses, and how to set it all up. It also ships an **advisory
 > companion** ([`rules/shell-safety.md`](rules/shell-safety.md)) you symlink into
-> `~/.claude/rules/` — the judgment calls (obfuscation, piping remote → shell, prompt
-> injection) a hook can't enforce.
+> `~/.claude/rules/` — the hook blind spots (encoding/indirection, `.cwd` resolution) a
+> pattern-matching hook can't enforce.
 
 ## Install
 
