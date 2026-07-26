@@ -4,9 +4,9 @@
 (primary) cross-checked against Anthropic's official plugin/marketplace docs (validation
 layer, retrieved live 2026-06-21, Claude Code v2.1.x) and this repo's `CLAUDE.md` house
 rules (layered source). **Rubric:** 86 items / 12 dimensions — full machine-readable list
-in [`../openspec/changes/audit-plugin-best-practices/rubric.json`](../openspec/changes/audit-plugin-best-practices/rubric.json),
+in [`../openspec/changes/archive/2026-06-21-audit-plugin-best-practices/rubric.json`](../openspec/changes/archive/2026-06-21-audit-plugin-best-practices/rubric.json),
 abbreviated in [Appendix A](#appendix-a--full-rubric). Full per-item verdicts (8 targets ×
-86 items) in [`verdicts.json`](../openspec/changes/audit-plugin-best-practices/verdicts.json).
+86 items) in [`verdicts.json`](../openspec/changes/archive/2026-06-21-audit-plugin-best-practices/verdicts.json).
 
 > This is a **measurement, not a migration.** No plugin file or `marketplace.json` entry was
 > modified. Findings are triaged into proposed follow-up changes (§6); those are *listed*,
@@ -177,7 +177,7 @@ Against `specs/plugin-best-practice-audit/spec.md`:
 ## Appendix A — full rubric
 
 Abbreviated; canonical machine-readable form in
-[`rubric.json`](../openspec/changes/audit-plugin-best-practices/rubric.json). `docs:` = Anthropic
+[`rubric.json`](../openspec/changes/archive/2026-06-21-audit-plugin-best-practices/rubric.json). `docs:` = Anthropic
 official documentation.
 
 | ID | Dim | Rule (abbrev) | Applies to | Sources | Conflict resolution |

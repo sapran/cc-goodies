@@ -136,7 +136,7 @@ convention is that no write to `main`/`master` originates from a Claude session 
 (this file's own "Git workflow" note, `CLAUDE.md`), and `ask` would put that approval in
 the same low-friction UI as every other routine tool call — a real weakening, not a
 friction reduction, for the one hazard class git-guard exists to stop. Argued in full in
-`openspec/changes/guard-ask-escalation/design.md`, Decision D2.
+`openspec/changes/archive/2026-07-26-guard-ask-escalation/design.md`, Decision D2.
 
 Full detail and the override paths: [git-guard README](../plugins/git-guard/README.md).
 
@@ -151,7 +151,7 @@ newlines, single pipes, background `&`, subshells `( )` and brace groups `{ }`, 
 each piece, so `git pull && rm -rf /`, `true | rm -rf /` and `(rm -rf /)` are all caught.
 
 **Each matched arm resolves to one of two decision channels** (AXIS 2,
-`openspec/changes/guard-ask-escalation/design.md`): **deny** — exit 2, stderr, an
+`openspec/changes/archive/2026-07-26-guard-ask-escalation/design.md`): **deny** — exit 2, stderr, an
 unconditional block — for harm that is irreversible or that a human at a prompt
 couldn't actually judge from the command text alone; **ask** —
 `permissionDecision: "ask"` JSON on stdout, exit 0 — escalating to the human's own

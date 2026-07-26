@@ -16,7 +16,7 @@ a terminal.
 ## Deny vs. ask — which channel a rule resolves to
 
 Every matched rule is on exactly one of two channels (design.md's AXIS 2, in the
-`guard-ask-escalation` change):
+archived `guard-ask-escalation` change):
 
 - **Deny** — the harm is irreversible (data or a filesystem is gone, a disk is wiped),
   disruptive in a way no narrower variant could soften, or a human reading the command
@@ -37,8 +37,8 @@ Every matched rule is on exactly one of two channels (design.md's AXIS 2, in the
 session sees a real prompt; a headless/background session with nobody to answer it
 degrades cleanly to a blocked command with no code-level help needed (verified: three
 headless `claude -p` runs, all denied at exit 0 with the reason surfaced, no hang, no
-retry spam — see `design.md` Decision D3 in the `guard-ask-escalation` change for the
-full record and its interactive-scope caveat).
+retry spam — see `design.md` Decision D3 in the archived `guard-ask-escalation` change for
+the full record and its interactive-scope caveat).
 
 ## What a deny looks like
 
