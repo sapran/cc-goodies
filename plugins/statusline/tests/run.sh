@@ -429,6 +429,34 @@ case_k() {
   fi
 }
 
+# ===========================================================================
+# Case (l) — the enriched second line ends AT the gauge block, and the script
+# exits 0. Every other case asserts substring presence only, so anything spliced
+# in after the w: gauge — the slot the removed caveman badge occupied — would
+# pass a..k unnoticed, and a crash in that slot is invisible too: the gauges are
+# already printed by then, and command substitution eats the lost trailing
+# newline, so `nlines` still reads 2. Pin both the tail and the exit code.
+# ===========================================================================
+case_l() {
+  home=$(fresh_home); repo=$(make_repo main)
+  # Reset timestamps deliberately omitted: without them L2 terminates at the
+  # w: gauge, giving a stable, time-independent tail to anchor on.
+  stdin=$(ST_CWD="$repo" ST_MODEL="Opus 4.8" ST_USED="42" ST_RL5H="30" ST_RL7D="20" \
+          ST_EFFORT="high" ST_DUR_MS="5000" mk_stdin)
+  render "$stdin" "$home" "$repo"; rc=$?
+  esc=$(printf '\033')
+  tail2=$(printf '%s' "$OUT" | tail -1 | sed "s/${esc}\[[0-9;]*m//g")
+  res=ok
+  [ "$rc" -eq 0 ] || res=bad
+  [ "$(nlines "$OUT")" -eq 2 ] || res=bad
+  printf '%s' "$tail2" | grep -qE 'w:20%$' || res=bad
+  if [ "$res" = ok ]; then
+    ok "l/l2-ends-at-gauges (exit 0; line 2 ends at the w: gauge, nothing after)"
+  else
+    bad "l/l2-ends-at-gauges" "rc=$rc tail=[$tail2]"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 case_a
 case_b
@@ -441,6 +469,7 @@ case_h
 case_i
 case_j
 case_k
+case_l
 
 echo "-----"
 echo "statusline (mode-toggle): $pass/$total passed, $fail failed."
