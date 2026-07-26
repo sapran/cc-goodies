@@ -7,6 +7,24 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Removed
+
+- **`statusline` no longer renders the `caveman` plugin's mode badge** (plugin `0.6.0` →
+  `0.7.0`). The badge was added in `0.8.0` so the two plugins could coexist under Claude
+  Code's single `statusLine` slot; it rendered only when the caveman plugin's
+  `.caveman-active` flag was present, and with caveman uninstalled that guard fails on
+  every render. Removing it deletes this repo's only cross-plugin coupling — a fixed-path
+  read of `.caveman-active` and `.caveman-statusline-suffix`, two files another
+  marketplace owns — along with the 43 lines of escape-injection hardening those reads
+  needed and 8 of the harness's 19 cases (11 remain, all passing). The enriched second
+  line now ends with the `c:`/`s:`/`w:` gauges; for any install without an active caveman
+  flag the render is **byte-identical** to `0.10.0` (the current release), and `lean` was
+  never affected.
+  `STATUSLINE_CAVEMAN` and `CAVEMAN_STATUSLINE_SAVINGS` are no longer read — setting them
+  does nothing, and they can be dropped from shell profiles. If you still run caveman and
+  want its badge, wire the caveman plugin's own `caveman-statusline.sh` into the
+  `statusLine` slot instead of this statusline.
+
 ## [0.10.0] - 2026-07-08
 
 ### Added
