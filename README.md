@@ -18,8 +18,8 @@ Developer-experience extras for [Claude Code](https://claude.com/claude-code), s
 > **[shell-safety manual](docs/shell-safety.md)** is the map: threat model, what each
 > layer catches and misses, and how to set it all up. It also ships an **advisory
 > companion** ([`rules/shell-safety.md`](rules/shell-safety.md)) you symlink into
-> `~/.claude/rules/` — the judgment calls (obfuscation, piping remote → shell, prompt
-> injection) a hook can't enforce.
+> `~/.claude/rules/` — the hook blind spots (encoding/indirection, `.cwd` resolution) a
+> pattern-matching hook can't enforce.
 
 ## Install
 

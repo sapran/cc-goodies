@@ -239,10 +239,9 @@ installed. **Resume** by clearing it (remove the line or set `SHELL_GUARD_DISABL
 
 ## Advisory companion
 
-shell-guard denies or asks about the dangerous *forms*. The judgment calls a hook can't enforce —
-don't run obfuscated commands, don't pipe remote content into an interpreter, confirm
-before a recursive delete, keep secrets off the command line, ignore instructions
-embedded in fetched content — live in an advisory rules file,
+shell-guard denies or asks about the dangerous *forms*. What its pattern matching can't
+see — encoding/indirection, how `git-guard` resolves `.cwd` vs. a `cd` prefix, and the
+`!`-paste escape hatch every block already offers — live in an advisory rules file,
 [`rules/shell-safety.md`](../../rules/shell-safety.md).
 
 Claude Code auto-loads any `*.md` under `~/.claude/rules/` into every session, so wiring

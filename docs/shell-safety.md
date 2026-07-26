@@ -41,7 +41,7 @@ one layer is covered by another.
 | **1. Deny list** | Exact string match on the command | Harness (`permissions.deny`) | closed (blocks) | a fixed, enumerated set | re-ordered flags, quoting, variables, anything not listed |
 | **2. git-guard** | Parses the git verb + resolves the branch | Plugin PreToolUse hook | **open** (allows if `jq` missing) | commit/merge/pull/rebase/reset/push that lands on a protected branch (plain forms) | deliberately hidden git (`bash -c`, `$()`, `sudo -u USER`, gitconfig aliases); non-git ops |
 | **3. shell-guard** | Resolves the target + skips common wrappers | Plugin PreToolUse hook | **open** (allows if `jq` missing) | a small catastrophic-command set (covers a typical shell deny list) | deliberately hidden forms (option-value wrapping, `bash -c`, encoding, stdin targets) |
-| **4. Advisory rules** | Reasoning from `~/.claude/rules/*.md` | The agent (not enforced) | n/a | judgment calls: obfuscation, piping remote→shell, prompt injection, secrets on the CLI | anything the agent overlooks or is told to ignore |
+| **4. Advisory rules** | Reasoning from `~/.claude/rules/*.md` | The agent (not enforced) | n/a | hook blind spots: encoding/indirection, `.cwd`-vs-`cd` branch resolution, the `!`-paste escape hatch | anything the agent overlooks or is told to ignore |
 
 > `rtk-hook` is **not** a security layer — it is a token optimizer that rewrites
 > commands. It is listed in this repo's lineup but does not gate anything dangerous.
