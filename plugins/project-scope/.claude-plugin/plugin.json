@@ -7,14 +7,5 @@
     "url": "https://github.com/sapran"
   },
   "license": "MIT",
-  "keywords": [
-    "scope",
-    "plugins",
-    "mcp",
-    "skills",
-    "context-budget",
-    "tokens",
-    "project",
-    "settings"
-  ]
+  "keywords": ["scope", "plugins", "mcp", "skills", "context-budget", "tokens", "project", "settings"]
 }
