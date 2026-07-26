@@ -1,6 +1,6 @@
 ---
 name: project-scope
-version: 0.3.1
+version: 0.3.2
 description: >-
   This skill should be used when the user wants to scope or trim THIS project's plugins, MCP
   servers, and skills to only those relevant for a stated theme — "scope this project to
@@ -62,8 +62,8 @@ confirm implicitly by each bucket's risk and reversibility, not a fixed drop ord
 ### Phase 4 — Apply
 
 Plugin ops first — uninstalls, then installs; abort and report on failure rather than
-half-applying. Then merge `.claude/settings.json` (never replace, never hand-edit
-`enabledPlugins`) using mechanism.md's keys and commands.
+half-applying. Then merge `.claude/settings.json` (never replace) using mechanism.md's keys and
+commands.
 
 ### Phase 5 — Verify
 

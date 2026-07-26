@@ -37,7 +37,7 @@ architecture.
 
 ### Changed
 
-- **`project-scope` is now a router over its references** (plugin `0.2.1` → `0.3.1`).
+- **`project-scope` is now a router over its references** (plugin `0.2.1` → `0.3.2`).
   `SKILL.md` drops from 287 to 91 lines; mechanics live only in `references/`. Removes the
   constants that had become judgment suppressors rather than scaffolding — a stopword list, a
   substring heuristic, fixed result caps, fixed budget options, a question-overflow rule — and

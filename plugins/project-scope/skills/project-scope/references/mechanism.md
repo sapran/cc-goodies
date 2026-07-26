@@ -13,6 +13,8 @@ Plugins are the only surface with a real per-project install primitive. Adding o
 
 Let the CLI own `enabledPlugins`. Do **not** hand-edit that key — run the install/uninstall commands and preserve whatever they write.
 
+If an uninstall reports nothing to remove, the plugin was only user-installed, not project-scoped — treat it as already-absent and stop there. Never fall back to a global uninstall (dropping `--scope project`) to force it off; that removes the plugin from every project, not just this one.
+
 ## Paradigm 2 — enable / disable (denylist & override in `.claude/settings.json`)
 
 For surfaces with **no** project-install primitive — user-level standalone skills, and user-scope / Claude Desktop / claude.ai MCP servers. These are toggled off *for the project*, never "uninstalled":
@@ -24,8 +26,22 @@ For surfaces with **no** project-install primitive — user-level standalone ski
 | Plugin-provided skills / MCPs | (governed by the plugin) | Follow their parent plugin's project install/uninstall — install the plugin to get them, uninstall to remove them. No separate key. |
 | Skill-listing context budget | `skillListingBudgetFraction: 0.01` (1%) … `0.05` (5%) | Fraction of context window reserved for the skill listing. Lower = aggressive truncation = leaner per-turn cost. Higher = full descriptions visible = better skill matching. Default 0.01. |
 
+Disabling an MCP server for this project is always the `deniedMcpServers` write above — never
+`claude mcp remove -s user <name>`. That command deletes the server globally, for every project,
+not just this one; never run it as a silent fallback — it needs the user's own explicit,
+separate confirmation first.
+
 `.claude/settings.local.json` (the permission allowlist) is a separate concern — read it only
 to confirm it exists, never write to it.
+
+## Writing `.claude/settings.json`
+
+Include the schema reference at the top of the file — `"$schema":
+"https://json.schemastore.org/claude-code-settings.json"` — whether merging into an existing file
+or creating a new one.
+
+Use `Edit` to add or merge keys when the file already exists; use `Write` only for first-time
+creation, and create the `.claude/` directory first if it doesn't exist yet.
 
 ## npm-based skills / tools
 
@@ -55,6 +71,10 @@ Do **not** touch `~/.claude/settings.json` (global) — other projects must keep
 
 ## Phase 1 — inventory subagent
 
+Re-run this inventory on every invocation, even when the theme matches a prior run in this
+session — the plugin/MCP universe and marketplace contents may have changed since, and a stale
+in-context inventory would defeat Phase 0's marketplace refresh.
+
 Dispatch inventory to a subagent (general-purpose is sufficient) rather than running it in the
 main session. A fresh subagent has no memory of this skill being loaded, so the dispatch prompt
 must be self-contained: pass it the clarified theme, the refreshed catalog-cache path (above),
@@ -79,6 +99,13 @@ subagent's own available-tools listing for the `mcp__claude_ai_<Name>__*` prefix
 reverse-derive `serverName` as `"claude.ai <Name>"`). Also inventory any other
 `mcp__<server>__*` tool not produced by an enabled plugin (no `mcp__plugin_*` prefix). A Desktop
 name colliding with a user-scope MCP of the same `serverName` is one denylist entry, not two.
+
+A correctly-denied Claude Desktop MCP is easy to misjudge as a failure: it never appeared in
+`claude mcp list` to begin with, so its absence there proves nothing either way. Verify its
+denial instead by confirming the `deniedMcpServers` entry is present in the written
+settings.json and that its `mcp__<name>__*` tools are gone from the tool list — which only takes
+effect next session, after a restart.
+
 The available-skills list is in the session-start system-reminder; skills with a `plugin:`
 prefix are governed by their plugin's enable state.
 

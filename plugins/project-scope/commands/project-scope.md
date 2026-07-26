@@ -9,4 +9,5 @@ Use the **project-scope** skill to scope this project's plugins, MCP servers and
 
 The user's stated theme for this run (may be empty): **$ARGUMENTS**
 
-If it's empty, the skill asks once for a theme before proceeding.
+If it's empty, or the starting point is unclear, the skill asks one direct question at a time —
+potentially several in sequence — before proceeding.
