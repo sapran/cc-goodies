@@ -1,43 +1,69 @@
 ## ADDED Requirements
 
-> **Gating note.** Every requirement below is contingent on the Task 1 headless-`ask`
-> experiment (`tasks.md` §1) resolving go, per `design.md` Decision D3. None of these
-> requirements are implemented, and this capability does not exist, until that gate
-> resolves. The requirements describe the contract this change would establish if it
-> proceeds.
+> **Status.** The Task 1 go/no-go gate (`tasks.md` §1, `design.md` Decision D3) has passed
+> — GO, scoped to headless `claude -p`; see `design.md` for the full record and its scope
+> caveat. The requirements below describe the contract this capability establishes.
+> Implementation (`tasks.md` §2+) has not started — every requirement here is proposed,
+> not yet built.
 
-### Requirement: shell-guard arms are tiered into catastrophic (deny) and hygiene (ask)
+### Requirement: shell-guard arms resolve to a deny or ask channel (AXIS 2)
 
-`shell-guard` SHALL classify each of its detection arms into exactly one of two decision
-tiers: **catastrophic**, which SHALL resolve to `permissionDecision: "deny"`, and
-**hygiene**, which SHALL resolve to `permissionDecision: "ask"`. The catastrophic tier
+`shell-guard` SHALL classify each of its detection arms onto exactly one of two channels
+on AXIS 2 (`channel: deny | ask` — can a human meaningfully approve this specific
+command?): the **deny channel**, which SHALL resolve to `permissionDecision: "deny"`, and
+the **ask channel**, which SHALL resolve to `permissionDecision: "ask"`. The deny channel
 SHALL comprise: recursive delete of a protected path, `dd` or a redirect onto a raw disk
-device, `mkfs`/`wipefs`/`newfs`/destructive `diskutil`, fork bomb, and a network download
-piped into an interpreter (`curl`/`wget`/`fetch` into a shell or language runtime). The
-hygiene tier SHALL comprise: `chmod 777`/`0777`, the `: >` truncate-to-empty idiom,
-privilege escalation (`sudo`/`doas`/`su`/`runuser`/`pkexec`/`gosu`/`sudoedit`/`setpriv`),
-`eval`, and system halt/reboot (`reboot`/`shutdown`/`halt`/`poweroff`). Commands matching
-`SHELL_GUARD_EXTRA_PATTERNS` SHALL remain in the catastrophic (deny) tier, since the guard
-has no way to infer the severity of a user-supplied pattern.
+device, `mkfs`/`wipefs`/`newfs`/destructive `diskutil`, a fork bomb, a network download
+piped into an interpreter (`curl`/`wget`/`fetch` into a shell or language runtime), and
+system halt/reboot (`reboot`/`shutdown`/`halt`/`poweroff`). The ask channel SHALL
+comprise: `chmod 777`/`0777`, the `: >` truncate-to-empty idiom, privilege escalation
+(`sudo`/`doas`/`su`/`runuser`/`pkexec`/`gosu`/`sudoedit`/`setpriv`), and `eval` — except
+that an `eval` invocation whose argument contains a download command word (`curl`/`wget`/
+`fetch`) SHALL resolve to the deny channel instead, per the dedicated requirement below.
+Commands matching `SHELL_GUARD_EXTRA_PATTERNS` SHALL remain on the deny channel, since the
+guard has no way to infer the severity of a user-supplied pattern.
 
-#### Scenario: A catastrophic arm still denies outright
+#### Scenario: A deny-channel arm still denies outright
 
-- **WHEN** a command matches a catastrophic arm (e.g. `rm -rf /`, `dd … of=/dev/disk0`,
-  `mkfs.ext4 /dev/sda`, a fork bomb, or `curl … | bash`)
+- **WHEN** a command matches a deny-channel arm (e.g. `rm -rf /`, `dd … of=/dev/disk0`,
+  `mkfs.ext4 /dev/sda`, a fork bomb, `curl … | bash`, or `reboot`)
 - **THEN** the hook resolves `permissionDecision: "deny"` and the command does not run
 
-#### Scenario: A hygiene arm asks instead of denying
+#### Scenario: An ask-channel arm asks instead of denying
 
-- **WHEN** a command matches a hygiene arm (e.g. `chmod 777 x`, `: > file`, `sudo apt
-  update`, `eval "…"`, or `reboot`)
+- **WHEN** a command matches an ask-channel arm (e.g. `chmod 777 x`, `: > file`, `sudo apt
+  update`, or `eval "some code"` with no download command word in its argument)
 - **THEN** the hook resolves `permissionDecision: "ask"`, escalating to the human via the
   permission prompt, instead of an unconditional block
 
-#### Scenario: User-configured extra patterns stay deny-tier
+#### Scenario: User-configured extra patterns stay on the deny channel
 
 - **WHEN** a command matches a pattern in `SHELL_GUARD_EXTRA_PATTERNS`
-- **THEN** the hook resolves `permissionDecision: "deny"`, regardless of what the
-  catastrophic/hygiene split does for the built-in arms
+- **THEN** the hook resolves `permissionDecision: "deny"`, regardless of what the deny/ask
+  channel split does for the built-in arms
+
+### Requirement: an `eval` argument that fetches remote content stays on the deny channel
+
+`shell-guard` SHALL resolve `permissionDecision: "deny"`, not `"ask"`, for an `eval`
+invocation whose argument contains a download command word (`curl`, `wget`, or `fetch`),
+even though `eval` is otherwise an ask-channel arm. This applies the same principle as the
+network-download-piped-to-interpreter arm: a human reading the command text at an `ask`
+prompt sees the URL, not the payload the URL serves at run time, so an `ask` approval
+there would be uninformed. This requirement changes only which channel an already-matched
+`eval` arm resolves to for this sub-case — it does not add a new detection pattern, and the
+`eval` arm's trigger condition (command word == `eval`) is unchanged.
+
+#### Scenario: `eval` fetching and running remote content is denied, not asked
+
+- **WHEN** an `eval` command's argument contains `curl`, `wget`, or `fetch` (e.g. `eval
+  "$(curl http://x)"`)
+- **THEN** the hook resolves `permissionDecision: "deny"`, not `"ask"`
+
+#### Scenario: `eval` without a download command word still asks
+
+- **WHEN** an `eval` command's argument contains no `curl`/`wget`/`fetch` command word
+- **THEN** the hook resolves `permissionDecision: "ask"`, per the ask-channel default for
+  the `eval` arm
 
 ### Requirement: git-guard remains deny-only
 
@@ -60,99 +86,70 @@ exit-2/stderr path), with no behavioural change from this capability.
 - **THEN** the hook resolves `permissionDecision: "deny"`, unchanged from today's
   behaviour
 
-### Requirement: non-interactive sessions can force deny-only behaviour
+### Requirement: the escape hatch and fail-open behaviour are preserved on every channel
 
-`shell-guard` SHALL support a configuration key, resolved via the existing
-`env var → ~/.claude/shell-guard.conf → built-in default` precedence and the existing
-non-sourcing `conf_get` parser, that forces every hygiene-tier arm to resolve
-`permissionDecision: "deny"` instead of `"ask"`, for use in headless, background, or
-otherwise unattended sessions where an `ask` prompt would have no human to answer it. The
-default polarity of this key (tiering on by default with this key as an opt-out, vs.
-tiering off by default with this key as an opt-in) SHALL be fixed by the Task 1 experiment
-result recorded in `design.md`, not assumed by this requirement.
-
-#### Scenario: The deny-only key overrides the hygiene tier
-
-- **WHEN** the deny-only configuration key is set and a command matches a hygiene-tier arm
-- **THEN** the hook resolves `permissionDecision: "deny"`, exactly as if the arm were
-  catastrophic-tier
-
-#### Scenario: The deny-only key does not affect the catastrophic tier
-
-- **WHEN** the deny-only configuration key is set and a command matches a catastrophic-tier
-  arm
-- **THEN** the hook resolves `permissionDecision: "deny"`, identical to its behaviour with
-  the key unset (no observable change)
-
-#### Scenario: The deny-only key is read with the existing precedence
-
-- **WHEN** the deny-only key is set as an environment variable, as a
-  `~/.claude/shell-guard.conf` line, or not at all
-- **THEN** the environment variable wins over the conf file, the conf file wins over the
-  built-in default, and a malformed or adversarial conf file value cannot cause anything
-  beyond a KEY=VALUE string read (never sourced/executed)
-
-### Requirement: the escape hatch and fail-open behaviour are preserved for every tier
-
-Every arm, regardless of tier, SHALL continue to hand back the exact command as a
+Every arm, regardless of channel, SHALL continue to hand back the exact command as a
 ready-to-paste `!`-prefixed override line, exactly as `deny()` does today. Both guards
 SHALL continue to fail open (allow the command, print a one-line warning) when `jq` is
-unavailable, before any tier or decision logic is reached.
+unavailable, before any channel or decision logic is reached.
 
-#### Scenario: A denied catastrophic command still offers the paste-to-override line
+#### Scenario: A denied deny-channel command still offers the paste-to-override line
 
-- **WHEN** a catastrophic-tier arm blocks a command
+- **WHEN** a deny-channel arm blocks a command
 - **THEN** the response includes the unmodified original command as a `!`-prefixed line
   the human can paste into their own shell
 
-#### Scenario: An asked hygiene command still offers the paste-to-override line
+#### Scenario: An asked ask-channel command still offers the paste-to-override line
 
-- **WHEN** a hygiene-tier arm resolves to `"ask"` and the human declines the prompt
+- **WHEN** an ask-channel arm resolves to `"ask"` and the human declines the prompt
 - **THEN** the response includes the unmodified original command as a `!`-prefixed line,
-  identical in form to the catastrophic-tier deny response
+  identical in form to the deny-channel response
 
-#### Scenario: Missing jq fails open regardless of tier
+#### Scenario: Missing jq fails open regardless of channel
 
 - **WHEN** `jq` is not available on the system running either guard
 - **THEN** the hook prints a one-line warning and allows the command, before any
-  catastrophic/hygiene classification or `ask`/`deny` decision is evaluated
+  deny/ask channel classification or decision is evaluated
 
-### Requirement: detection logic is unchanged by tiering
+### Requirement: detection logic is unchanged by channeling
 
-Introducing decision tiers SHALL NOT add, remove, widen, or narrow any existing detection
-pattern, `case` arm, wrapper-skip rule, or command/segment/stage-splitting behaviour in
-either guard. Tiering SHALL only select which output mechanism (`deny`/exit-2-stderr vs.
-`ask`/JSON-stdout-exit-0) an already-matched arm uses.
+Introducing decision channels SHALL NOT add, remove, widen, or narrow any existing
+detection pattern, `case` arm, wrapper-skip rule, or command/segment/stage-splitting
+behaviour in either guard. Channeling SHALL only select which output mechanism
+(`deny`/exit-2-stderr vs. `ask`/JSON-stdout-exit-0) an already-matched arm uses. The one
+permitted refinement under this requirement is channel-selection based on
+already-matched-arm argument text (the `eval`/download-command-word exception above) — it
+changes no detection pattern, only which channel that already-matched arm resolves to.
 
-#### Scenario: A command that was allowed before tiering is still allowed after
+#### Scenario: A command that was allowed before channeling is still allowed after
 
 - **WHEN** a command matched no arm in either guard before this capability existed
-- **THEN** it still matches no arm after tiering is introduced, and runs unmodified
+- **THEN** it still matches no arm after channeling is introduced, and runs unmodified
 
-#### Scenario: A command that was blocked before tiering is still blocked or asked, never silently allowed
+#### Scenario: A command that was blocked before channeling is still blocked or asked, never silently allowed
 
 - **WHEN** a command matched a specific arm before this capability existed
-- **THEN** after tiering, it still matches that same arm and resolves to either `deny` or
-  `ask` per the taxonomy — never falls through to a plain allow as a side effect of adding
-  tiers
+- **THEN** after channeling, it still matches that same arm and resolves to either `deny`
+  or `ask` per the taxonomy — never falls through to a plain allow as a side effect of
+  introducing channels
 
 ### Requirement: no silent command rewriting via `updatedInput`
 
 Neither guard SHALL use the hook API's `updatedInput` field to substitute a different
-command for the one that was evaluated, for any arm, under any tier. A suggested safe
+command for the one that was evaluated, for any arm, under any channel. A suggested safe
 alternative MAY be included as text within `permissionDecisionReason`, but the command
 that actually runs (when one runs) SHALL always be the one Claude originally proposed,
 never a guard-modified substitute.
 
-#### Scenario: A hygiene-tier ask never substitutes a rewritten command
+#### Scenario: An ask-channel decision never substitutes a rewritten command
 
-- **WHEN** a hygiene-tier arm resolves to `"ask"` and the human approves it
+- **WHEN** an ask-channel arm resolves to `"ask"` and the human approves it
 - **THEN** the command that runs is byte-for-byte the command Claude originally proposed,
   not a guard-rewritten variant
 
 #### Scenario: A reason may suggest an alternative without applying it
 
-- **WHEN** a hygiene-tier arm's `permissionDecisionReason` names a safer alternative
+- **WHEN** an ask-channel arm's `permissionDecisionReason` names a safer alternative
   command
 - **THEN** that alternative is text shown to the human only — it is never substituted into
   `updatedInput` or otherwise run automatically

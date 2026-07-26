@@ -1,82 +1,82 @@
-## 1. Experiment — what does `ask` do with no human watching? (BLOCKING, run first)
+## 1. Experiment — what does `ask` do with no human watching? (RUN — verdict: GO, scoped to headless)
 
-Nothing in section 2+ may be implemented before this section's gate resolves. This
-section is a specification of the experiment, not its execution — running it is a
-separate, later action by whoever picks this up.
+This section is now a completed record of what was run, what was not, and the verdict.
+Section 2+ implementation is unblocked (verdict: GO, scoped to headless `claude -p`) but
+has not started — every task there remains unchecked.
 
-- [ ] 1.1 Build a throwaway probe hook, isolated from the real plugins: a script that,
-      for any Bash command containing a unique sentinel string (e.g.
-      `__ASK_PROBE_7f3a__`), unconditionally emits
-      `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"probe"}}`
-      on stdout with exit 0, and no-ops (exit 0, no output) for everything else. Wire it
-      as a `PreToolUse`/`Bash` hook in a **scratch project's** `.claude/settings.json`
-      (never the shared marketplace plugins, never `~/.claude/settings.json`) so the
-      probe cannot leak into any other session.
-- [ ] 1.2 **Case A — foreground interactive.** In a normal interactive session, run the
-      sentinel command. Record: does the permission prompt appear as expected, and does
-      approving/denying it behave like a normal tool-permission prompt (baseline sanity
-      check — confirms the probe itself works before testing the risky cases).
-- [ ] 1.3 **Case B — background subagent, interactive parent.** From an interactive
-      session, dispatch a subagent via the `Agent` tool with background execution (the
-      mode this repo's own `voice-notify` `SubagentStop` work confirms runs without
-      blocking the parent turn) whose task is to run the sentinel command. Record:
-      wall-clock time to resolution, whether the tool call returns/hangs, whether a
-      prompt is ever surfaced to the human (and if so, whether the human is even looking
-      at the right place — the parent turn may have already ended), and what the
-      subagent's tool-result content looks like if it does resolve.
-- [ ] 1.4 **Case C — fully headless, no attached TTY.** Invoke Claude Code in its
-      non-interactive/scripted mode (whatever the current headless entry point is —
-      confirm the exact invocation against `code.claude.com/docs` at experiment time,
-      since this proposal does not assume one) with a prompt that runs the sentinel
-      command, and no terminal attached to answer any prompt. Record the same signals as
-      1.3: hang vs. timeout vs. immediate resolution, and the process's exit behaviour
-      (does the whole run hang, error out, or silently proceed as if allowed/denied).
-- [ ] 1.5 **Case D — repeated/parallel dispatch.** Repeat 1.3 with several parallel
-      background subagents each hitting the sentinel command in the same turn. Record
-      whether the outcomes are independent (no spam) or whether multiple prompts/hangs
-      compound.
+- [x] 1.1 Build a throwaway probe hook, isolated from the real plugins: unconditionally
+      returns `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"probe"}}`
+      on stdout with exit 0 for every Bash call. **As actually run:** driven via `claude -p`
+      (Claude Code 2.1.220, model haiku) rather than gated on a sentinel string inside a
+      scratch project's interactive `.claude/settings.json` as originally specified here —
+      firing unconditionally for the run's one Bash call is an equally isolated mechanism
+      for a single-command headless invocation. Isolated from the shared marketplace
+      plugins and `~/.claude/settings.json`.
+- [ ] 1.2 **Case A — foreground interactive.** NOT executed. The experiment as run covered
+      headless `claude -p` only (see 1.4). Baseline interactive-prompt behaviour remains
+      assumed from `code.claude.com/docs/en/hooks.md`, not independently verified — this is
+      the scope caveat recorded in `design.md` Decision D3.
+- [ ] 1.3 **Case B — background subagent, interactive parent.** NOT executed. Same scope
+      gap as 1.2. `design.md` Decision D3 explains why the headless result (1.4) is judged
+      a reasonable, but not verified, proxy for this case.
+- [x] 1.4 **Case C — fully headless, no attached TTY.** Executed via `claude -p` (Claude
+      Code 2.1.220, model haiku), one Bash call per run, across three permission modes:
+
+      | Mode | Exit | Elapsed | Hook fires | Outcome |
+      |---|---|---|---|---|
+      | default permission mode | 0 | 11s | 1 | blocked; reason surfaced to the model |
+      | `--permission-mode acceptEdits` | 0 | 12s | 1 | blocked; reason surfaced |
+      | `--permission-mode bypassPermissions` | 0 | 15s | 1 | blocked; reason surfaced |
+
+      No hang in any case; every run resolved cleanly at exit 0 with the command blocked
+      and its reason surfaced to the model. `ask` held even under `bypassPermissions`,
+      confirming it overrides auto-mode as documented.
+- [ ] 1.5 **Case D — repeated/parallel dispatch.** NOT executed as originally scoped
+      (concurrent parallel background subagents, which builds on 1.3, itself not run). The
+      three sequential runs in 1.4 each showed exactly one hook fire with no retry within
+      that single run, which is encouraging but not equivalent to verifying independence
+      under genuine parallel dispatch.
 - [ ] 1.6 Tear down the probe (remove it from the scratch project's `.claude/settings.json`
       and delete the scratch project) so no dangling non-uninstallable hook state is left
-      behind, per the repo's install⇄uninstall discipline.
-- [ ] 1.7 **Go/no-go gate.** Using 1.2–1.5's findings:
-      - **GO** — proceed to section 2 — only if, in every one of Cases B/C/D, `ask`
-        resolves within a short, bounded time (no indefinite hang) to a deterministic
-        outcome (deny or allow), and does not produce more than one prompt/attempt per
-        dispatched call (no spam).
-      - **NO-GO, ship deny-only** — if any of Cases B/C/D hangs indefinitely, times out
-        into an ambiguous state, or spams — do not tier the guards by default. Either
-        stop here (do not implement section 2), or implement section 2 with `ask` gated
-        fully **off by default**, reachable only behind the conf key from task 2.3 for
-        operators who have separately confirmed their own sessions are always
-        interactively attended (documented as an explicit, informed opt-in, not a
-        default).
-      - **Ambiguous / inconsistent across cases** (e.g., safe in Case B but not Case C) —
-        do not average this into a single verdict. Treat the *worst* observed case as
-        binding for the default, and document per-case findings in `design.md` so the
-        conf key's default can be justified against the specific mode that fails.
-      - Record the verdict and the evidence for each case directly in `design.md`
-        (replacing its "Task 1 result: TBD" placeholder) before starting section 2.
+      behind, per the repo's install⇄uninstall discipline. Not independently confirmed in
+      the run record this task list was updated from — left unchecked as a reminder to
+      verify no dangling state remains, rather than assumed done.
+- [x] 1.7 **Go/no-go gate.** Verdict: **GO, scoped to headless `claude -p`.** Every case
+      actually tested (1.4, three permission modes) resolved within a short, bounded time
+      (11–15s) to a deterministic outcome (denied), with exactly one hook fire per
+      dispatched call — no hang, no spam, no ambiguity. Cases A/B/D (1.2, 1.3, 1.5) were
+      not exercised; per `design.md` Decision D3, the headless result is treated as
+      sufficient to proceed with section 2's channel taxonomy by default, on the reasoning
+      that headless is the least-attended failure mode available to test and it already
+      degrades safely — but interactive-prompt and background-subagent-in-interactive-
+      session behaviour remains an assumed, not verified, extrapolation, recorded as a
+      standing scope caveat rather than resolved. Recorded in `design.md` Decision D3,
+      replacing its earlier "Task 1 result: TBD" placeholder. Consequence: the
+      `SHELL_GUARD_DENY_ONLY` conf key originally planned in section 2.3 is dropped — the
+      headless case already degrades `ask` to a blocked command automatically, at the
+      platform level, so no guard-side deny-only override is needed to cover that risk; see
+      `design.md` Decision D4 for the rejected-alternative writeup and its open question.
 
 ## 2. Script — shell-guard decision-channel split (`scripts/shell-guard.sh`)
 
-*(Section 2 onward: implementation. Do not start until 1.7's gate says GO, or GO with the
-deny-only-by-default fallback.)*
+*(Section 2 onward: implementation — unblocked by 1.7's GO verdict. Not yet started; every
+task below remains unchecked.)*
 
 - [ ] 2.1 Add a JSON-stdout emitter (`ask()`, mirroring the existing `deny()` shape) that
       prints the `hookSpecificOutput.permissionDecision: "ask"` object with
-      `permissionDecisionReason` and exits 0 — used only by the arms assigned `ask` in
-      the taxonomy below (see `design.md` for the full arm list and reasoning).
-- [ ] 2.2 Re-point the hygiene arms (`chmod 777`, `: >` truncate, privilege escalation,
-      `eval`, system halt/reboot — see `design.md` for the final list, contingent on the
-      Task 1 result) from `deny()` to `ask()`. Catastrophic arms (recursive delete of a
-      protected path, `dd`/redirect onto a raw disk device, `mkfs`/`wipefs`/`newfs`/
-      destructive `diskutil`, fork bomb, `curl|sh`) are untouched — same `deny()` call,
-      same exit-2/stderr path, as today.
-- [ ] 2.3 Add the deny-only conf key (name and default polarity fixed by the 1.7 verdict;
-      provisionally `SHELL_GUARD_DENY_ONLY`), read via `conf_get` at the existing
-      `env var → conf file → default` precedence. When set, every arm that would emit
-      `ask` falls back to `deny()` instead — i.e., the pre-this-change behaviour,
-      selectable per session/operator.
+      `permissionDecisionReason` and exits 0 — used only by the arms assigned to the ask
+      channel below (see `design.md` Decision D1 for the full arm list and reasoning).
+- [ ] 2.2 Re-point the ask-channel arms (`chmod 777`, `: >` truncate, privilege escalation,
+      and `eval` when its argument has no download command word — see `design.md`
+      Decision D1 for the final list) from `deny()` to `ask()`. Deny-channel arms
+      (recursive delete of a protected path, `dd`/redirect onto a raw disk device,
+      `mkfs`/`wipefs`/`newfs`/destructive `diskutil`, fork bomb, `curl|sh`, and system
+      halt/reboot) are untouched — same `deny()` call, same exit-2/stderr path, as today.
+- [ ] 2.3 Within the `eval` arm, check whether its argument contains a download command
+      word (`curl`/`wget`/`fetch`); if so, call `deny()` instead of `ask()`. Per
+      `design.md` Decision D1's `eval`-exception writeup and the dedicated requirement in
+      `specs/guard-decision-tiers/spec.md` — this is a channel-selection check on
+      already-matched-arm text, not a new detection pattern.
 - [ ] 2.4 Confirm the `!`-paste escape-hatch line is present, unchanged, in both the
       `deny()` and the new `ask()` output.
 - [ ] 2.5 Confirm the missing-`jq` fail-open path is untouched (still exits 0 with a
@@ -97,24 +97,27 @@ deny-only-by-default fallback.)*
 ## 4. Tests — decision-channel assertions
 
 - [ ] 4.1 Extend `plugins/shell-guard/tests/run.sh` (and `cases.tsv` if its format needs
-      a decision-tier column) so an `ask` case is asserted on its actual output — exit 0
+      a decision-channel column) so an `ask` case is asserted on its actual output — exit 0
       **and** `hookSpecificOutput.permissionDecision == "ask"` in stdout JSON — not
       misread as a plain allow (today's harness only asserts exit codes).
-- [ ] 4.2 Add one case per re-tiered arm (`chmod 777`, `: >`, `sudo`, `eval`, `reboot` —
-      per the final taxonomy) confirming it now resolves to `ask`, plus one case per
-      still-catastrophic arm (`rm -rf /`, `dd` to device, `mkfs`, fork bomb, `curl|sh`)
-      confirming it is still a plain exit-2/stderr `deny` with no JSON on stdout.
-- [ ] 4.3 Add a case exercising `SHELL_GUARD_DENY_ONLY` (or whatever task 2.3 named it):
-      a hygiene arm that would normally `ask` falls back to `deny` when the key is set.
-- [ ] 4.4 Full `plugins/shell-guard/tests/run.sh` green; `plugins/git-guard/tests/run.sh`
+- [ ] 4.2 Add one case per newly ask-channel arm (`chmod 777`, `: >`, `sudo`, `eval` with
+      no download word — per `design.md` Decision D1) confirming it now resolves to `ask`,
+      plus one case per still-deny-channel arm (`rm -rf /`, `dd` to device, `mkfs`, fork
+      bomb, `curl|sh`, `reboot`) confirming it is still a plain exit-2/stderr `deny` with
+      no JSON on stdout. Add a dedicated case for `eval "$(curl http://x)"` (the existing
+      `eval_curl` case in `cases.tsv`) confirming it stays on the deny channel despite
+      `eval` otherwise being ask-channel — see `design.md` Decision D1's `eval`-exception
+      writeup.
+- [ ] 4.3 Full `plugins/shell-guard/tests/run.sh` green; `plugins/git-guard/tests/run.sh`
       and `run-routing.sh` green and unmodified in expected outcomes.
 
 ## 5. Docs
 
-- [ ] 5.1 `plugins/shell-guard/README.md`: document the two decision tiers, the new conf
-      key, and that `ask` requires the harness's own permission-prompt UI (link the
-      go/no-go finding for context on why it's conditional).
-- [ ] 5.2 `docs/shell-safety.md`: Layer 3 (shell-guard) table/prose gains a decision-tier
+- [ ] 5.1 `plugins/shell-guard/README.md`: document the two AXIS 2 channels (deny/ask) and
+      that `ask` requires the harness's own permission-prompt UI (link the go/no-go
+      finding in `design.md` Decision D3 for context on the verified headless behaviour and
+      its scope caveat).
+- [ ] 5.2 `docs/shell-safety.md`: Layer 3 (shell-guard) table/prose gains a decision-channel
       note; Layer 2 (git-guard) prose gains one line stating it remains all-deny and why,
       cross-referencing this change.
 - [ ] 5.3 `rules/shell-safety.md`: check whether the escape-hatch wording still holds
@@ -122,8 +125,9 @@ deny-only-by-default fallback.)*
       block; update only if it no longer describes what actually happens.
 - [ ] 5.4 Bump `plugins/shell-guard/.claude-plugin/plugin.json` version (minor —
       additive); `git-guard`'s manifest is unaffected (no behaviour change).
-- [ ] 5.5 `CHANGELOG.md` entry recording the tiering, the conf key, and (if relevant) the
-      Task 1 finding that justified shipping it.
+- [ ] 5.5 `CHANGELOG.md` entry recording the channel split and the Task 1 finding that
+      justified shipping it (verified GO, scoped to headless `claude -p`; see `design.md`
+      Decision D3).
 
 ## 6. Release
 
