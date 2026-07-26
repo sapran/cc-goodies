@@ -47,10 +47,12 @@ directly.
 Classify each returned candidate: keep/remove (active), install/skip (installed-disabled),
 propose/skip (marketplace) — sized to the theme's actual relevance, not a fixed count. Weigh
 `always_on` token cost per mechanism.md's disclosure convention; never present a family-match or
-unavailable figure as this session's own exact cost. Anything mandated by global
-`~/.claude/CLAUDE.md` or `~/.claude/rules/*.md` is kept, never silently removed — flag it
-instead. Never propose removing `superpowers:using-superpowers`, `update-config`, or
-`project-scope` itself.
+unavailable figure as this session's own exact cost. Anything the user's global
+`~/.claude/CLAUDE.md` or `~/.claude/rules/*.md` declares authoritative or always-on — a memory
+store for cross-session state, a local model endpoint, a session-start output style — is kept,
+never silently removed; flag the conflict instead. Describe such resources by kind rather than
+naming specific plugins, which date. Never propose removing `superpowers:using-superpowers`,
+`update-config`, or `project-scope` itself.
 
 ### Phase 3 — Present, then ask
 
