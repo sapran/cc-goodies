@@ -1,6 +1,6 @@
 ---
 name: project-scope
-version: 0.2.1
+version: 0.2.2
 description: >-
   This skill should be used when the user wants to scope or trim THIS project's plugins, MCP
   servers, and skills to only those relevant for a stated theme — "scope this project to
@@ -77,17 +77,30 @@ Get the disabled set from the text listing (it carries scope + status reliably a
 claude plugins list | awk '/❯/{id=$2} /Status:.*disabled/{print id}' | sort -u
 ```
 
-These are low-friction install candidates — already downloaded, so `claude plugins install <id> --scope project` scopes them in with **no** marketplace fetch. Fetch all their descriptions, categories, install counts, and per-turn token cost in **one** cache query (no per-plugin file reads):
+These are low-friction install candidates — already downloaded, so `claude plugins install <id> --scope project` scopes them in with **no** marketplace fetch. Fetch all their descriptions, categories, install counts, and per-turn token cost in **one** cache query (no per-plugin file reads).
+
+**Before running the query, state your own known model id as a literal** (e.g. `claude-sonnet-5`) — a skill's Bash/jq calls receive no injected model-identity payload, so this comes only from your own self-knowledge, never from the environment (see references/mechanism.md). Pass it in as `--arg model`, derive its family word (the token between `claude-` and the version, e.g. `sonnet` from `claude-sonnet-5`) as `--arg family`, and resolve each plugin's `.tokens` by the three-step procedure — exact match, else family match, else unavailable — never `to_entries[0]` (an arbitrary first key):
 
 ```bash
 CAT="$HOME/.claude/plugins/plugin-catalog-cache.json"
-jq -r --argjson ids '["feature-dev@claude-plugins-official","mcp-apps@claude-plugins-official"]' '
+MODEL="claude-sonnet-5"          # <- your own self-reported model id, stated above, not detected
+FAMILY=$(printf '%s' "$MODEL" | cut -d- -f2)
+jq -r --argjson ids '["feature-dev@claude-plugins-official","mcp-apps@claude-plugins-official"]' \
+      --arg model "$MODEL" --arg family "$FAMILY" '
   .catalog.plugins as $p | $ids[] | . as $id | ($p[$id] // {}) as $e |
-  "\($id)\t[\($e.marketplace_entry.category // "?")]\taon=\((($e.tokens // {}) | to_entries[0].value.always_on) // "?")\t\($e.marketplace_entry.description // "NOT IN CATALOG")"
+  ($e.tokens // {}) as $tok |
+  ( if ($tok | has($model)) then {aon: $tok[$model].always_on, note: ""}
+    elif ($tok | keys | map(select(test($family))) | length) > 0 then
+      ($tok | keys | map(select(test($family))) | .[0]) as $fk |
+      {aon: $tok[$fk].always_on, note: " (via \($fk), not \($model))"}
+    else {aon: null, note: ""}
+    end
+  ) as $res |
+  "\($id)\t[\($e.marketplace_entry.category // "?")]\taon=\($res.aon // "unavailable")\($res.note)\t\($e.marketplace_entry.description // "NOT IN CATALOG")"
 ' "$CAT"
 ```
 
-For any row printing `NOT IN CATALOG` (de-listed plugins — e.g. some third-party security plugins), fall back to reading that single plugin's `plugin.json` manifest on disk. Only the cache-misses need a file read — not all of them.
+A row's `aon=` value carries its own disclosure: a bare number is an exact match (this session's own cost, no caveat needed); `(via <key>, not <model>)` is a family match — a different generation's figure, always name it wherever you surface it; `unavailable` means neither matched — never treat it as zero cost downstream. For any row printing `NOT IN CATALOG` (de-listed plugins — e.g. some third-party security plugins), fall back to reading that single plugin's `plugin.json` manifest on disk. Only the cache-misses need a file read — not all of them.
 
 Do **not** pre-filter Pass B by id keyword-match — plugin ids and theme tokens often use different vocabulary (e.g. theme "improve performance" vs. plugin id `skill-creator`). Read all descriptions and let the model judge.
 
@@ -131,10 +144,10 @@ For each currently-active plugin/MCP/skill, classify as **keep** or **remove** b
 Treat Claude Desktop app MCPs (from Phase 1A step 3) as first-class candidates here — they consume tool-listing budget in CC sessions just like user-scope MCPs and deserve theme-based scoping. The presence of dozens of `mcp__claude_ai_Ahrefs__*` / `mcp__claude_ai_HubSpot__*` tools in an unrelated project is the typical motivation for denying them.
 
 #### Pass B: surface installed-but-disabled candidates worth installing
-For each installed-but-disabled plugin (full set, not pre-filtered), read its description from the cache (Pass 1B query; `plugin.json` only for cache-misses). Classify as **install** (`claude plugins install <id> --scope project` — already downloaded, no fetch) or **leave out**. Factor in each candidate's `always_on` token cost: a plugin that loads heavy always-on context every turn needs a stronger theme justification than a near-zero-cost one, and one that bundles its own MCP server adds tool-listing budget on install.
+For each installed-but-disabled plugin (full set, not pre-filtered), read its description from the cache (Pass 1B query; `plugin.json` only for cache-misses). Classify as **install** (`claude plugins install <id> --scope project` — already downloaded, no fetch) or **leave out**. Factor in each candidate's resolved `always_on` token cost (per Phase 1B's disclosure — exact, family-match, or unavailable): a plugin that loads heavy always-on context every turn needs a stronger theme justification than a near-zero-cost one, and one that bundles its own MCP server adds tool-listing budget on install. Carry the disclosure forward wherever this judgment is surfaced — never weigh or present a family-match or unavailable figure as if it were this session's own measured cost.
 
 #### Pass C: surface marketplace candidates worth proposing
-For each of the ~15 filtered marketplace plugins, classify as **propose-install** (`claude plugins install <id> --scope project` — downloads from the marketplace **and** executes plugin code locally) or **skip**. Be conservative — only propose plugins whose value is clear and theme-aligned. Weigh each candidate's `always_on` token cost and any bundled MCP servers (extra tool-listing budget every turn) against its theme value — a high-`always_on` plugin that's only tangentially relevant is a skip.
+For each of the ~15 filtered marketplace plugins, classify as **propose-install** (`claude plugins install <id> --scope project` — downloads from the marketplace **and** executes plugin code locally) or **skip**. Be conservative — only propose plugins whose value is clear and theme-aligned. Weigh each candidate's resolved `always_on` token cost (per Phase 1B's disclosure) and any bundled MCP servers (extra tool-listing budget every turn) against its theme value — a high-`always_on` plugin that's only tangentially relevant is a skip. As in Pass B, name the resolved key whenever the figure isn't an exact match, and treat "unavailable" as unmeasured, not zero.
 
 #### Conflict rule (applies to all passes)
 
@@ -167,16 +180,24 @@ DISABLE — user-level / Desktop tools (denylist & override, save context tokens
     # overflow goes through the Customize text path).
 
 INSTALL — already downloaded, scope into project (claude plugins install <id> --scope project):
-  <list of plugins — one-line description + always_on token cost (+ "bundles MCP" flag if any)>
+  <list of plugins — one-line description + always_on token cost, disclosed per Phase 1B (bare
+   number = exact match for this session's model; "via <key>, not <model>" = family match, a
+   different generation's figure; "unavailable" = no match, excluded from the budget sum below)
+   (+ "bundles MCP" flag if any)>
 
 INSTALL — from marketplace, downloads + scopes into project (claude plugins install <id> --scope project):
-  <list of plugins — one-line description + unique_installs + always_on token cost (+ "bundles MCP" flag if any)>
+  <list of plugins — one-line description + unique_installs + always_on token cost, same
+   disclosure convention as above (+ "bundles MCP" flag if any)>
   ⚠ Each install executes plugin code locally — explicit consent required.
 
 CONTEXT BUDGET (skillListingBudgetFraction):
   Current: <current value or "default 1%">
   Choose: 1% / 2% / 3% / 5%
-  Per-turn context note: sum of always_on across the proposed enabled set ≈ <N> tokens/turn.
+  Per-turn context note: sum of always_on (exact + family-match figures only) across the proposed
+    enabled set ≈ <N> tokens/turn. Name any plugin excluded as unavailable/unmeasured — never
+    count it as zero. If the sum includes any family-match figures, say so explicitly (e.g. "≈ N
+    tokens/turn, includes M plugins' figures from a different model generation") — it is not a
+    precise measurement of this session's own cost when it does.
 ```
 
 This way the user sees **everything** the model is proposing before the AskUserQuestion menu loads. Per-item natural-language overrides are supported — the user can reply "looks good but skip X" between this print and the apply phase.
