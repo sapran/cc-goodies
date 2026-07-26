@@ -7,6 +7,8 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-26
+
 ### Added
 
 - **`voice-notify` names the agent's purpose, and says when the work comes back** (plugin
