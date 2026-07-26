@@ -32,7 +32,7 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
             "args": ["notification"],
             "async": true,
-            "timeout": 10
+            "timeout": 20
           }
         ]
       }
@@ -46,7 +46,7 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
             "args": ["stop"],
             "async": true,
-            "timeout": 10
+            "timeout": 20
           }
         ]
       }
@@ -60,7 +60,21 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
             "args": ["dispatch"],
             "async": true,
-            "timeout": 5
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
+            "args": ["agent-result"],
+            "async": true,
+            "timeout": 20
           }
         ]
       }
@@ -74,7 +88,7 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
             "args": ["subagent-stop"],
             "async": true,
-            "timeout": 5
+            "timeout": 20
           }
         ]
       }
