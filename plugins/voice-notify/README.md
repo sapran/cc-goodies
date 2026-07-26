@@ -104,6 +104,11 @@ A background agent's `PostToolUse` fires milliseconds after dispatch as a launch
 later. The presence of that record (or of the `background_tasks` entry) is exactly what tells
 the two cases apart, so **every agent is voiced once and only once**.
 
+A foreground agent that errors or that you interrupt never reaches `PostToolUse` at all —
+Claude Code fires `PostToolUseFailure` instead — so that event is hooked too, and routes to the
+same failure phrasing (*"Count to three — that one didn't finish."*). A background agent that
+fails surfaces the other way, as a `SubagentStop` with no final message.
+
 Individual completion cues are spoken only while at most `CLAUDE_VOICE_NOTIFY_AGENT_NAME_CAP`
 (default 3) subagents are in flight. Above the cap they go quiet — ten agents finishing should
 not be ten announcements — and the batch is marked as owing you a summary.

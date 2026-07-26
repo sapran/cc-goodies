@@ -29,7 +29,9 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   response, while a **background** agent's `PostToolUse` is a launch acknowledgement fired
   milliseconds after dispatch — that one only records the agent's id and purpose, and the
   cue waits for `SubagentStop`, where the agent is still listed in its own
-  `background_tasks` with its description.
+  `background_tasks` with its description. A foreground agent that errors or that you
+  interrupt never reaches `PostToolUse`, so `PostToolUseFailure` is hooked as well and
+  routes to the same failure phrasing.
 
   Individual cues are capped at `CLAUDE_VOICE_NOTIFY_AGENT_NAME_CAP` (default 3) concurrent
   agents so a wide sweep doesn't become a monologue, and a roll-up (*"All five helpers are
@@ -49,7 +51,7 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   New knobs: `CLAUDE_VOICE_NOTIFY_AGENT_NAMES=off` restores the anonymous `0.5.0` cues
   wholesale, plus `..._AGENT_NAME_CAP`, `..._AGENT_DESC_MAX` and
   `..._SUBAGENT_COLLECT`. Missing `jq`, a non-macOS host, and both existing mutes degrade
-  exactly as before. The suite grew from 40 cases to 90; all state stays in `$TMPDIR`, so
+  exactly as before. The suite grew from 40 cases to 92; all state stays in `$TMPDIR`, so
   `/plugin uninstall` remains the complete revert.
 
 ### Changed

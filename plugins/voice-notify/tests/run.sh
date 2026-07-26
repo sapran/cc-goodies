@@ -413,6 +413,13 @@ all_reset
 run agent-result "$J_FG_FAIL"
 has_any "a failed agent uses the failure pool" "didn't finish" "came back empty" "no result from that one"
 
+# PostToolUseFailure carries tool_input but no tool_response at all (an interrupted or errored
+# agent tool call). The same arm must still name it and route it to the failure pool.
+all_reset
+run agent-result '{"session_id":"sess","tool_name":"Agent","tool_input":{"description":"Count to three"},"tool_use_id":"t1","error":"interrupted","is_interrupt":true}'
+has "Count to three" "an interrupted agent is still named"
+has_any "an interrupted agent uses the failure pool" "didn't finish" "came back empty" "no result from that one"
+
 # --- subagent-stop: background agents are voiced here, foreground ones are not ---
 all_reset
 run subagent-stop "$J_BG_STOP"
