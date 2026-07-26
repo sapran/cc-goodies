@@ -35,6 +35,14 @@
 # Exit codes: 0 = allow (Claude Code runs the command), 2 = block (stderr is fed
 # back to Claude). Any other code is a non-blocking error in the hooks API and
 # would let the command run, so we never use one to deny.
+#
+# `permissionDecision: "ask"` (the harness's richer PreToolUse contract) was
+# evaluated for this guard and deliberately REJECTED — every arm here stays
+# deny-only, unlike the sibling shell-guard, which does split some arms onto
+# an ask channel. Reasoning: openspec/changes/guard-ask-escalation/design.md,
+# Decision D2 (this repo's own no-session-writes-to-main convention, `ask`
+# putting a main-push approval in the same low-friction UI as routine tool
+# approvals, and git-guard having exactly one hazard class to begin with).
 
 set -u
 

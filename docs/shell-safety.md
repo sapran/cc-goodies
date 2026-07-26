@@ -130,19 +130,37 @@ land on a protected branch.
 - **Fails open** if `jq` is missing (prints one line, allows the command) — a guard that
   blocked every Bash call on a missing dependency would be worse than none.
 
+**git-guard emits no `ask` — it is all-`deny`, by deliberate design.** Unlike
+shell-guard (below), every git-guard arm keeps the exit-2/stderr path. This repo's own
+convention is that no write to `main`/`master` originates from a Claude session at all
+(this file's own "Git workflow" note, `CLAUDE.md`), and `ask` would put that approval in
+the same low-friction UI as every other routine tool call — a real weakening, not a
+friction reduction, for the one hazard class git-guard exists to stop. Argued in full in
+`openspec/changes/guard-ask-escalation/design.md`, Decision D2.
+
 Full detail and the override paths: [git-guard README](../plugins/git-guard/README.md).
 
 ---
 
 ### Layer 3 — shell-guard (dangerous commands)
 
-A `PreToolUse`/`Bash` hook that hard-blocks (exit 2) a **small catastrophic set** of
-commands. Unlike Layer 1 it resolves the target and skips common wrappers, catching
+A `PreToolUse`/`Bash` hook that acts on a **small catastrophic set** of commands.
+Unlike Layer 1 it resolves the target and skips common wrappers, catching
 re-ordered-flag variants the string list misses. It splits compound commands on `&&`, `||`, `;`,
 newlines, single pipes, background `&`, subshells `( )` and brace groups `{ }`, and judges
 each piece, so `git pull && rm -rf /`, `true | rm -rf /` and `(rm -rf /)` are all caught.
 
-**Blocks:**
+**Each matched arm resolves to one of two decision channels** (AXIS 2,
+`openspec/changes/guard-ask-escalation/design.md`): **deny** — exit 2, stderr, an
+unconditional block — for harm that is irreversible or that a human at a prompt
+couldn't actually judge from the command text alone; **ask** —
+`permissionDecision: "ask"` JSON on stdout, exit 0 — escalating to the human's own
+permission prompt instead, for harm that is reversible and fully disclosed in the
+command text. A headless/background session with nobody to answer an `ask` prompt
+degrades cleanly to a blocked command — verified across three permission modes, no
+hang, no retry spam (`design.md` Decision D3).
+
+**Denies outright (channel: deny):**
 
 - recursive delete of a protected path — `rm -rf`/`-fr`/`-r --force`/`--recursive --force`
   (any order) targeting `/`, `/*`, `~`, `$HOME`, a top-level system dir (`/usr`, `/etc`,
@@ -156,12 +174,19 @@ each piece, so `git pull && rm -rf /`, `true | rm -rf /` and `(rm -rf /)` are al
 - a network download fed to an interpreter — a `curl`/`wget`/`fetch` pipeline stage
   followed by `sh`/`bash`/`zsh`/`dash`/`ksh`/`python`/`perl`/`ruby`/`node`/`php`, e.g.
   `curl … | bash` (matched by pipeline stage, so a quoted `echo "curl … | bash"` is not a
-  false positive);
+  false positive) — **including** `eval "$(curl …)"`: a fetched payload isn't visible to
+  a human at an `ask` prompt any more than a piped download's is, so this stays deny even
+  though plain `eval` is ask-channel;
+- system halt/reboot — `reboot`, `shutdown`, `halt`, `poweroff`.
+
+**Asks first (channel: ask — a real permission prompt, not a block):**
+
 - the `: > file` truncate-to-empty idiom (but not a plain `> file` redirect or `: >>`
   append);
-- `chmod 777`/`0777` (world-writable); `eval` (arbitrary code execution);
-- privilege escalation — `sudo`/`su`/`doas`/`runuser`/`pkexec`/…;
-- system halt/reboot — `reboot`, `shutdown`, `halt`, `poweroff`.
+- `chmod 777`/`0777` (world-writable);
+- `eval` (arbitrary code execution) — unless its argument fetches remote content (see
+  above, which stays deny);
+- privilege escalation — `sudo`/`su`/`doas`/`runuser`/`pkexec`/….
 
 **Deliberately allows** (so it doesn't break normal work): `rm -rf ./build`,
 `rm -rf node_modules`, deep paths under a system dir (`/usr/local/lib/...`),
@@ -205,14 +230,17 @@ Tune to taste:
 - Extra shell patterns: `/shell-guard` → add to `SHELL_GUARD_EXTRA_PATTERNS`.
 - Pause without uninstalling: `GIT_GUARD_DISABLE=1` / `SHELL_GUARD_DISABLE=1`.
 
-To **override** a block for one command, run it yourself — the guards only ever gate
-Claude's Bash tool, never your own shell. Every block hands the command back as a
-ready-to-paste `!`-prefixed line; typed into the Claude Code prompt, `!` runs it in your
-shell, bypassing the hook. Both guards also state that a reworded or reordered retry is
-blocked the same way, so that paste-line is the only path forward. shell-guard fronts
-the line with an irreversibility warning for commands with no safer form (`rm -rf ~`,
-`dd` onto a disk, `reboot`, …); for commands with a concrete safe variant (`chmod 777`,
-`: >`, `eval`, `curl|sh`, `sudo`, …) it names that alternative instead.
+To **override** a deny (or decline-and-override an `ask`) for one command, run it
+yourself — the guards only ever gate Claude's Bash tool, never your own shell. Every
+response — deny or ask — hands the command back as a ready-to-paste `!`-prefixed line;
+typed into the Claude Code prompt, `!` runs it in your shell, bypassing the hook. Both
+guards also state that a reworded or reordered retry is judged the same way, so that
+paste-line is the only path forward. shell-guard fronts the line with an
+irreversibility warning for commands with no safer form (`rm -rf ~`, `dd` onto a disk,
+`reboot`, …); for commands with a concrete safe variant (`chmod 777`, `: >`, `eval`,
+`curl|sh`, `sudo`, …) it names that alternative instead — and for the ask-channel arms
+among those (`chmod 777`, `: >`, `sudo`, plain `eval`), that alternative shows up right
+in the permission prompt, not just in a stderr report.
 
 ---
 
@@ -241,8 +269,10 @@ the line with an irreversibility warning for commands with no safer form (`rm -r
 ## Verifying it works
 
 There is no test framework — the guards are verified by piping synthetic tool-call JSON
-to the hook scripts and asserting exit codes (`0` = allow, `2` = block), in real temp git
-repos where branch state matters. See [CLAUDE.md](../CLAUDE.md#testing) and the
+to the hook scripts and asserting exit codes (`0` = allow or shell-guard `ask`, `2` =
+deny) plus, for shell-guard's ask-channel cases, the `permissionDecision`/
+`permissionDecisionReason` JSON on stdout — in real temp git repos where branch state
+matters. See [CLAUDE.md](../CLAUDE.md#testing) and the
 [hook input contract](../CLAUDE.md#hook-authoring--the-input-contract-important).
 
 Quick manual smoke after install (`/hooks` reload first):

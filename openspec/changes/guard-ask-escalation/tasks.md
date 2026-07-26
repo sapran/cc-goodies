@@ -62,78 +62,108 @@ has not started — every task there remains unchecked.
 *(Section 2 onward: implementation — unblocked by 1.7's GO verdict. Not yet started; every
 task below remains unchecked.)*
 
-- [ ] 2.1 Add a JSON-stdout emitter (`ask()`, mirroring the existing `deny()` shape) that
-      prints the `hookSpecificOutput.permissionDecision: "ask"` object with
-      `permissionDecisionReason` and exits 0 — used only by the arms assigned to the ask
-      channel below (see `design.md` Decision D1 for the full arm list and reasoning).
-- [ ] 2.2 Re-point the ask-channel arms (`chmod 777`, `: >` truncate, privilege escalation,
-      and `eval` when its argument has no download command word — see `design.md`
-      Decision D1 for the final list) from `deny()` to `ask()`. Deny-channel arms
-      (recursive delete of a protected path, `dd`/redirect onto a raw disk device,
-      `mkfs`/`wipefs`/`newfs`/destructive `diskutil`, fork bomb, `curl|sh`, and system
-      halt/reboot) are untouched — same `deny()` call, same exit-2/stderr path, as today.
-- [ ] 2.3 Within the `eval` arm, check whether its argument contains a download command
-      word (`curl`/`wget`/`fetch`); if so, call `deny()` instead of `ask()`. Per
-      `design.md` Decision D1's `eval`-exception writeup and the dedicated requirement in
-      `specs/guard-decision-tiers/spec.md` — this is a channel-selection check on
-      already-matched-arm text, not a new detection pattern.
-- [ ] 2.4 Confirm the `!`-paste escape-hatch line is present, unchanged, in both the
-      `deny()` and the new `ask()` output.
-- [ ] 2.5 Confirm the missing-`jq` fail-open path is untouched (still exits 0 with a
-      one-line warning before either `deny()` or `ask()` can be reached).
-- [ ] 2.6 `bash -n plugins/shell-guard/scripts/shell-guard.sh` and
-      `shellcheck plugins/shell-guard/scripts/shell-guard.sh` clean.
+- [x] 2.1 Added `ask()` in `scripts/shell-guard.sh`, mirroring `deny()`'s class/reason/alt
+      contract: builds the same axis-1 message text, then emits
+      `{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask",
+      permissionDecisionReason:...}}` via `jq -n` on stdout and calls `exit 0` itself
+      (never returns to its caller — simplest, matches the task's "mirrors deny() shape
+      ... and exits 0" wording without threading a third return-code through
+      eval_stage/evaluate_segment/the main loop).
+- [x] 2.2 Re-pointed privilege escalation (`sudo`/`doas`/`su`/`runuser`/`pkexec`/`gosu`/
+      `sudoedit`/`setpriv`), `chmod 777`/`0777`, and the `: >` truncate idiom from
+      `deny()` to `ask()`, verbatim same class/reason/alt text as before. Deny-channel
+      arms (rm, dd, mkfs/wipefs/newfs/diskutil, DEV_RE disk-redirect, fork bomb,
+      detect_net_pipe's curl|sh, reboot/shutdown/halt/poweroff, EXTRA patterns)
+      untouched — still call `deny()`.
+- [x] 2.3 `eval` now branches on `$seg` (the FULL original segment, set by
+      `evaluate_segment` — not the per-stage tokens `eval_stage` normally works from):
+      contains `curl`/`wget`/`fetch` -> `deny()` (unchanged message); otherwise ->
+      `ask()`. Necessary because the stage-splitter further down splits on `(`/`)`, so
+      `eval "$(curl …)"`'s `curl` lands in a *different* stage than `eval` itself —
+      checking only the eval stage's own tokens would have missed it. Verified against
+      the real `eval_curl` test case, not assumed.
+- [x] 2.4 Confirmed: `deny()` unchanged (still prints `! $cmd`); `ask()`'s
+      `permissionDecisionReason` includes the identical `! $cmd` line. Smoke-tested both
+      paths directly (see 2.6 verification below) — the escape hatch line appears
+      verbatim in the JSON reason text for every ask-channel arm exercised.
+- [x] 2.5 Confirmed: the missing-`jq` check (lines ~48-52) is above and unrelated to the
+      `deny()`/`ask()` helpers — untouched by this change, and `ask()` itself calls `jq`
+      only after that fail-open gate has already passed.
+- [x] 2.6 `bash -n` and `shellcheck` both clean on `shell-guard.sh` (see final report).
+      Also smoke-tested 6 cases directly (chmod 777, eval plain, eval+curl, rm -rf /,
+      `: >`, sudo apt) confirming exact JSON/stderr shape before touching the harness.
 
 ## 3. git-guard — no code change, document the rejected alternative
 
-- [ ] 3.1 Add a short header-comment note in `plugins/git-guard/scripts/git-guard.sh`
-      (near the existing exit-code comment) recording that `permissionDecision: "ask"`
-      was evaluated and rejected for this guard, with a one-line pointer to this change's
-      `design.md` for the reasoning, so a future reader doesn't re-litigate it from
-      scratch.
-- [ ] 3.2 No behavioural change: `plugins/git-guard/tests/run.sh` and
-      `run-routing.sh` should pass unmodified, confirming this.
+- [x] 3.1 Added a header-comment note in `git-guard.sh` after the existing exit-code
+      comment, recording that `ask` was evaluated and rejected for this guard, why
+      (session-originated main/master writes are a bright line this repo doesn't want in
+      a low-friction approval UI), and pointing at `design.md` Decision D2.
+- [x] 3.2 Confirmed unmodified: ran `run.sh` (49/49) and `run-routing.sh` (8/8) BEFORE
+      touching `git-guard.sh` as a baseline, then again after the 3.1 comment-only edit —
+      identical 49/49 and 8/8, no behavioural change.
 
 ## 4. Tests — decision-channel assertions
 
-- [ ] 4.1 Extend `plugins/shell-guard/tests/run.sh` (and `cases.tsv` if its format needs
-      a decision-channel column) so an `ask` case is asserted on its actual output — exit 0
-      **and** `hookSpecificOutput.permissionDecision == "ask"` in stdout JSON — not
-      misread as a plain allow (today's harness only asserts exit codes).
-- [ ] 4.2 Add one case per newly ask-channel arm (`chmod 777`, `: >`, `sudo`, `eval` with
-      no download word — per `design.md` Decision D1) confirming it now resolves to `ask`,
-      plus one case per still-deny-channel arm (`rm -rf /`, `dd` to device, `mkfs`, fork
-      bomb, `curl|sh`, `reboot`) confirming it is still a plain exit-2/stderr `deny` with
-      no JSON on stdout. Add a dedicated case for `eval "$(curl http://x)"` (the existing
-      `eval_curl` case in `cases.tsv`) confirming it stays on the deny channel despite
-      `eval` otherwise being ask-channel — see `design.md` Decision D1's `eval`-exception
-      writeup.
-- [ ] 4.3 Full `plugins/shell-guard/tests/run.sh` green; `plugins/git-guard/tests/run.sh`
-      and `run-routing.sh` green and unmodified in expected outcomes.
+- [x] 4.1 Rewrote `run.sh` to capture stdout and stderr into SEPARATE temp files (not
+      just stderr as before) for every case. `expect` now accepts a third token `ask` (in
+      addition to `0`/`2`): asserts exit 0, empty stderr, and — via `jq -r` on the
+      captured stdout — `.hookSpecificOutput.permissionDecision == "ask"` plus the axis-1
+      message checks (`check_axis1`/`check_common_clauses` helpers, factored out so the
+      same class-membership tables apply to both the deny and ask channels) against
+      `.permissionDecisionReason`. `expect=2` cases gained a new
+      stdout-must-be-empty assertion (the deny channel must never leak JSON); `expect=0`
+      cases likewise assert empty stdout. `cases.tsv`'s header comment documents the new
+      `ask` token.
+- [x] 4.2 Moved `sudo_rm`, `sudo_apt`, `doas_reboot`, `chmod_777`, `chmod_R_0777`,
+      `trunc_colon` from `expect=2` to `expect=ask` (same ids, same commands — only the
+      expected channel changed, matching the new actual behaviour). Added `eval_plain`
+      (`eval "echo hi"`, expect `ask`) as the dedicated no-download-word case.
+      `eval_curl` (`eval "$(curl http://x)"`) stays `expect=2`, now with an explicit
+      section comment explaining why it stays deny-channel. `rm_root`, `dd_disk2`,
+      `mkfs_sda`, `forkbomb`, `curl_bash`/`wget_sh`, `reboot` already existed as
+      deny-channel cases and now additionally get the new stdout-empty assertion from 4.1.
+- [x] 4.3 `shell-guard: 53/53 passed, 0 failed` (52 prior + `eval_plain`).
+      `git-guard: 49/49 passed, 0 failed`; `git-guard routing: 8/8 passed, 0 failed` —
+      both unmodified in expected outcomes (3.2). Sanity-checked the new ask-channel
+      assertions are load-bearing: corrupted `permissionDecision:"ask"` ->
+      `"allow"` (7 FAILs, `bad-permissionDecision[allow]`), corrupted the chmod alt text
+      (2 FAILs, `missing-alt-substring`), and made `ask()` leak to stderr (7 FAILs,
+      `unexpected-stderr`) — each reverted, then re-confirmed clean 53/53.
 
 ## 5. Docs
 
-- [ ] 5.1 `plugins/shell-guard/README.md`: document the two AXIS 2 channels (deny/ask) and
-      that `ask` requires the harness's own permission-prompt UI (link the go/no-go
-      finding in `design.md` Decision D3 for context on the verified headless behaviour and
-      its scope caveat).
-- [ ] 5.2 `docs/shell-safety.md`: Layer 3 (shell-guard) table/prose gains a decision-channel
-      note; Layer 2 (git-guard) prose gains one line stating it remains all-deny and why,
-      cross-referencing this change.
-- [ ] 5.3 `rules/shell-safety.md`: check whether the escape-hatch wording still holds
-      verbatim now that some arms surface as a permission prompt instead of a stderr
-      block; update only if it no longer describes what actually happens.
-- [ ] 5.4 Bump `plugins/shell-guard/.claude-plugin/plugin.json` version (minor —
-      additive); `git-guard`'s manifest is unaffected (no behaviour change).
-- [ ] 5.5 `CHANGELOG.md` entry recording the channel split and the Task 1 finding that
-      justified shipping it (verified GO, scoped to headless `claude -p`; see `design.md`
-      Decision D3).
+- [x] 5.1 `plugins/shell-guard/README.md`: added a "Deny vs. ask" section (the AXIS 2
+      criterion + full deny/ask arm list + the verified headless-degrade behaviour,
+      linking `design.md` Decision D3 and its interactive-scope caveat), a new "What an
+      ask looks like" section (JSON example for `chmod 777 x`), retitled "What a block
+      looks like" to "What a deny looks like" with its `chmod 777` example swapped for
+      `curl|sh` (chmod moved to ask-channel), and tagged every rule in "What it blocks or
+      asks about" with **[deny]**/**[ask]**/**[ask/deny]**.
+- [x] 5.2 `docs/shell-safety.md`: Layer 3 gained a decision-channel paragraph plus
+      **[deny]**/**[ask]** split of its bullet list; Layer 2 gained a paragraph stating
+      git-guard remains all-deny and why, cross-referencing `design.md` Decision D2. Also
+      updated the "Recommended setup" override paragraph and "Verifying it works" (exit
+      codes now `0 = allow or ask`, `2 = deny`, plus the new JSON-on-stdout assertion) for
+      consistency.
+- [x] 5.3 `rules/shell-safety.md`: the intro's "hard-blocks the catastrophic forms (...,
+      `eval`, `sudo`, ...)" no longer described reality (both move to ask by default) —
+      reworded to "denies outright (...) or asks before running (`chmod 777`, `sudo`,
+      `eval`, …)". Rest of the file (advisory guidance to the agent, independent of guard
+      channel) needed no change.
+- [x] 5.4 `plugins/shell-guard/.claude-plugin/plugin.json`: `0.3.2` -> `0.4.0` (minor,
+      additive), description updated from "Block a small set of ..." to "Block or ask
+      before a small set of ...". `git-guard`'s manifest untouched, per the task.
+- [ ] 5.5 Deferred — CHANGELOG.md is explicitly out of scope for this implementation pass
+      (handled centrally at release time, per this session's instructions), so left
+      unedited and unchecked here rather than touched out of turn.
 
 ## 6. Release
 
-- [ ] 6.1 `jq empty plugins/shell-guard/.claude-plugin/plugin.json` and
-      `jq empty .claude-plugin/marketplace.json`.
-- [ ] 6.2 `claude plugins validate plugins/shell-guard`.
-- [ ] 6.3 Commit on the change branch (separate commits: script, tests, docs, per repo
-      convention), push, open a draft PR to `develop`. Archive + `main` FF happen after
-      review, per the repo release flow.
+- [x] 6.1 `jq empty plugins/shell-guard/.claude-plugin/plugin.json` and
+      `jq empty .claude-plugin/marketplace.json` both clean (marketplace.json read-only
+      checked, not edited — out of scope for this pass).
+- [x] 6.2 `claude plugins validate plugins/shell-guard` -> "Validation passed".
+- [ ] 6.3 Not run — this pass made no git-history-mutating calls (no add/commit/push) per
+      this session's explicit instructions; committing/pushing/PR is the calling agent's
+      or user's step.

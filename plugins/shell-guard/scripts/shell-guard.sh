@@ -1,15 +1,20 @@
 #!/bin/bash
 # cc-goodies / shell-guard
-# Block a small, curated set of *catastrophic* shell commands before they run.
+# Block or ask before a small, curated set of *catastrophic* shell commands run.
 #
 # Wired as a PreToolUse hook on the Bash tool. The tool call's JSON arrives on
 # stdin; we read .tool_input.command and .cwd, split the command into segments,
-# and block (exit 2) when a segment matches a high-confidence dangerous pattern:
-# wiping `/` or `$HOME`, recursively deleting a top-level system dir, writing
-# onto a raw disk device, mkfs/wipefs/destructive diskutil, a fork bomb, piping
-# a network download into a shell, truncating a file to empty (`: >`), `chmod 777`,
-# `eval`, privilege escalation (`sudo`/`doas`/…), and system halt/reboot.
-# Everything else passes straight through.
+# and act when a segment matches a high-confidence dangerous pattern. Every
+# matched arm resolves to one of two AXIS 2 channels (design.md, guard-ask-
+# escalation): DENY (exit 2, stderr) for harm that is irreversible or that a
+# human at a prompt could not actually judge — wiping `/` or `$HOME`, a top-
+# level system dir, writing onto a raw disk device, mkfs/wipefs/destructive
+# diskutil, a fork bomb, a network download piped into a shell (including via
+# `eval "$(curl …)"`), and system halt/reboot; or ASK (permissionDecision:
+# "ask" JSON on stdout, exit 0) for harm that is reversible and disclosed in
+# the command text itself — truncating a file to empty (`: >`), `chmod 777`,
+# `eval` (without a fetched payload), and privilege escalation (`sudo`/`doas`/
+# …). Everything else passes straight through.
 #
 # Threat model: an *aligned* agent that emits a catastrophic command BY ACCIDENT
 # in plain form (`rm -rf /`). This is a convenience guard, not a sandbox — it does
@@ -28,8 +33,12 @@
 # call (fails OPEN — a guard that blocks everything when a dependency is missing
 # is worse than no guard).
 #
-# Exit codes: 0 = allow, 2 = block (stderr is fed back to Claude). Any other
-# code is a non-blocking error in the hooks API, so we never use one to deny.
+# Exit codes: 0 = allow, OR ask (permissionDecision:"ask" JSON on stdout — the
+# harness escalates to the human's own permission prompt, and degrades to a
+# blocked command with no code-level help needed when nobody is there to answer
+# it: verified headless, see design.md Decision D3). 2 = deny (stderr is fed
+# back to Claude). Any other code is a non-blocking error in the hooks API, so
+# we never use one to deny.
 
 set -u
 set -f   # never glob while tokenising — keep `*` / `.*` literal in the command
@@ -83,19 +92,21 @@ FORK_RE='([A-Za-z_:][A-Za-z0-9_:]*)\(\)[[:space:]]*\{(.*)\}'
 TRUNC_RE='^[[:space:]]*:[[:space:]]*>([^>]|$)'
 
 # --- Helpers ----------------------------------------------------------------
+# $1 = axis-1 class, shared by deny() and ask() below (design.md's AXIS 1,
+#      `alternative: named|none` — independent of the `channel: deny|ask` axis
+#      (AXIS 2) that picks WHICH of these two functions a matched arm calls):
+#        none    - no safe variant of this action exists; keep the
+#                  irreversibility warning, offer no alternative.
+#        named   - a safe variant exists; print it instead of that warning.
+#        neutral - severity unknown (the EXTRA arm only); print neither.
+# $2 = human reason, naming the specific rule that matched.
+# $3 = safe alternative text (class=named only).
+# Both hand the command back as a copy-paste `!`-prefixed line: typed into the
+# Claude Code prompt, the `!` prefix runs it in the user's own shell, which
+# this hook never sees. $cmd is the original tool command.
 deny() {
-  # $1 = axis-1 class (design.md's AXIS 1, `alternative: named|none` — NOT the
-  #      `channel: deny|ask` axis owned by the sibling guard-ask-escalation
-  #      change, which this script never touches):
-  #        none    - no safe variant of this action exists; keep the
-  #                  irreversibility warning, offer no alternative.
-  #        named   - a safe variant exists; print it instead of that warning.
-  #        neutral - severity unknown (the EXTRA arm only); print neither.
-  # $2 = human reason, naming the specific rule that matched.
-  # $3 = safe alternative text (class=named only).
-  # Hand the blocked command back as a copy-paste `!`-prefixed line: typed
-  # into the Claude Code prompt, the `!` prefix runs it in the user's own
-  # shell, which this hook never sees. $cmd is the original tool command.
+  # DENY-channel arm: irreversible harm, or harm an `ask` prompt could not let
+  # a human judge (see design.md Decision D1). Blocks outright: exit 2, stderr.
   class="$1"; reason="$2"; alt="${3:-}"
   printf '%s\n' "⛔ shell-guard: blocked a dangerous command — $reason." >&2
   case "$class" in
@@ -107,6 +118,35 @@ deny() {
   printf '%s\n' "! $cmd" >&2
   printf '%s\n' "   Or set SHELL_GUARD_DISABLE=1 / see /shell-guard." >&2
   return 2
+}
+
+ask() {
+  # ASK-channel arm (AXIS 2, guard-ask-escalation): harm that is reversible and
+  # fully disclosed in the command text a human would read at a permission
+  # prompt (see design.md Decision D1). Escalates instead of blocking: prints
+  # `hookSpecificOutput.permissionDecision: "ask"` JSON on STDOUT and exits 0,
+  # carrying the exact same axis-1 class/reason/alt message substance deny()
+  # uses — same escape hatch, same variants clause — so the two channels
+  # differ only in delivery mechanism, never in what they tell the human. When
+  # nobody is there to answer the prompt (headless/background), the harness
+  # itself degrades this to a blocked command — verified, see design.md
+  # Decision D3. This function always exits the whole script; it never returns.
+  class="$1"; reason="$2"; alt="${3:-}"
+  msg="🟡 shell-guard: this needs your OK — $reason."
+  case "$class" in
+    none)  msg="$msg
+   ⚠️  This is destructive and IRREVERSIBLE. Verify the target before running." ;;
+    named) msg="$msg
+   → Safe alternative: $alt." ;;
+  esac
+  msg="$msg
+   Variants of this command (reordered flags, different quoting, a wrapper prefix, \$HOME for ~, …) are blocked too.
+   To run it anyway, paste into the prompt (! runs it in your shell):
+! $cmd
+   Or set SHELL_GUARD_DISABLE=1 / see /shell-guard."
+  jq -n --arg reason "$msg" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask",permissionDecisionReason:$reason}}'
+  exit 0
 }
 
 # Is this argument a catastrophic target — `/`, `$HOME`/`~`, a top-level system
@@ -219,14 +259,28 @@ eval_stage() {
       deny none "system halt/reboot ($c)"; return 2
       ;;
     sudo|doas|su|runuser|pkexec|gosu|sudoedit|setpriv)
-      deny named "$c — privilege escalation" "run the command directly, without \`$c\`"; return 2
+      ask named "$c — privilege escalation" "run the command directly, without \`$c\`"
       ;;
     eval)
-      deny named "eval — arbitrary code execution" "run the intended command directly, without the eval indirection"; return 2
+      # AXIS 2 channel-selection refinement (guard-ask-escalation, design.md
+      # Decision D1's eval-exception): a fetched payload isn't visible to a
+      # human at an ask prompt — same "can't approve what you can't see"
+      # principle as detect_net_pipe's curl|sh arm below — so check the FULL
+      # original segment ($seg, set by evaluate_segment) for a download word,
+      # not just this stage's own tokens: the stage splitter further down
+      # splits on `(`/`)`, so `eval "$(curl …)"` lands its `curl` in a
+      # DIFFERENT stage than this one. Detection is unchanged — this only
+      # decides which channel the already-matched eval arm resolves to.
+      case "$seg" in
+        *curl*|*wget*|*fetch*)
+          deny named "eval — arbitrary code execution" "run the intended command directly, without the eval indirection"; return 2 ;;
+        *)
+          ask named "eval — arbitrary code execution" "run the intended command directly, without the eval indirection" ;;
+      esac
       ;;
     chmod)
       for a in "$@"; do
-        case "$a" in 777|0777) deny named "chmod 777 — world-writable permissions" "chmod 755 (or the narrowest mode the task needs)"; return 2 ;; esac
+        case "$a" in 777|0777) ask named "chmod 777 — world-writable permissions" "chmod 755 (or the narrowest mode the task needs)" ;; esac
       done
       ;;
   esac
@@ -270,7 +324,7 @@ evaluate_segment() {
     deny none "redirect onto a raw disk device"; return 2
   fi
   if [[ "$seg" =~ $TRUNC_RE ]]; then
-    deny named "truncate a file to empty (\`: >\`)" "printf '' >"; return 2
+    ask named "truncate a file to empty (\`: >\`)" "printf '' >"
   fi
   if [[ "$seg" =~ $FORK_RE ]]; then
     fn="${BASH_REMATCH[1]}"; body="${BASH_REMATCH[2]}"

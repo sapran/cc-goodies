@@ -2,8 +2,9 @@
 
 Guidance for an agent driving a shell. These are the **judgment calls that a hook
 cannot enforce** — the companion to the [`shell-guard`](../plugins/shell-guard) plugin,
-which hard-blocks the catastrophic *forms* (`rm -rf ~`, `dd` to a device, `curl|sh`,
-`eval`, `sudo`, …). shell-guard stops the obvious; these rules cover the rest.
+which denies outright (`rm -rf ~`, `dd` to a device, `curl|sh`, …) or asks before
+running (`chmod 777`, `sudo`, `eval`, …) the catastrophic *forms*. shell-guard stops
+the obvious; these rules cover the rest.
 
 Drop this file into `~/.claude/rules/` (it auto-loads for every project) — see the
 [shell-guard README](../plugins/shell-guard/README.md#advisory-companion) for the

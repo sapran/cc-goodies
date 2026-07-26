@@ -1,24 +1,56 @@
 # shell-guard
 
-A `PreToolUse` hook that **blocks a small set of catastrophic shell commands before
-they run**. When Claude's Bash tool tries something that would wipe your home
-directory, reformat a disk, pipe a download straight into a shell, escalate with
-`sudo`, or halt the machine, the command is denied (exit 2) and Claude is told why —
-instead of finding out afterwards.
+A `PreToolUse` hook that **blocks or asks before a small set of catastrophic shell
+commands run**. When Claude's Bash tool tries something dangerous, the hook resolves
+it to one of two channels: **deny** — wiping your home directory, reformatting a disk,
+piping a download straight into a shell, or halting the machine is denied outright
+(exit 2) and Claude is told why; **ask** — a reversible action fully disclosed in the
+command text (`chmod 777`, `sudo`, `: >`, plain `eval`) escalates instead to the
+permission prompt you're already looking at, so you can approve or decline it in the
+same flow instead of a full block-report-paste round-trip. Either way you find out
+*before* it runs, not after.
 
 It only ever gates **Claude's Bash tool**. You can still run any command yourself in
 a terminal.
 
-## What a block looks like
+## Deny vs. ask — which channel a rule resolves to
 
-When a command matches, the hook exits 2 and Claude sees this on stderr (so it stops
-and reports back instead of running it). Every message names the specific rule that
-matched, states that variants of the same command are blocked too, and hands the
-command back as a ready-to-paste `!`-prefixed escape hatch — but the **second line**
-differs by class: commands with **no safe variant** (`rm -rf ~`, `dd` onto a disk,
-`mkfs`, a fork bomb, `reboot`, …) keep an explicit irreversibility warning and offer no
-alternative; commands with a **concrete safe variant** (`chmod 777`, `: >`, `eval`,
-`curl|sh`, `sudo`, …) drop that warning and name the alternative instead.
+Every matched rule is on exactly one of two channels (design.md's AXIS 2, in the
+`guard-ask-escalation` change):
+
+- **Deny** — the harm is irreversible (data or a filesystem is gone, a disk is wiped),
+  disruptive in a way no narrower variant could soften, or a human reading the command
+  at an `ask` prompt genuinely couldn't tell what it will do (a piped download's
+  payload isn't visible in the command text — including via `eval "$(curl …)"`, which
+  is denied for the same reason `curl … | bash` is, even though `eval` on its own is
+  ask-channel). Deny-channel rules: recursive delete of a protected path, `dd`/redirect
+  onto a raw disk device, `mkfs`/`wipefs`/`newfs`/destructive `diskutil`, a fork bomb,
+  a network download piped into an interpreter, system halt/reboot, and any
+  `SHELL_GUARD_EXTRA_PATTERNS` match (the guard can't judge a user pattern's severity,
+  so it stays deny-only).
+- **Ask** — the harm is reversible and the command text already discloses everything a
+  human needs to decide: `chmod 777`/`0777`, the `: >` truncate idiom, privilege
+  escalation (`sudo`/`doas`/`su`/…), and `eval` (when its argument has no
+  `curl`/`wget`/`fetch` in it).
+
+**`ask` requires the harness's own permission-prompt UI** — a human at an interactive
+session sees a real prompt; a headless/background session with nobody to answer it
+degrades cleanly to a blocked command with no code-level help needed (verified: three
+headless `claude -p` runs, all denied at exit 0 with the reason surfaced, no hang, no
+retry spam — see `design.md` Decision D3 in the `guard-ask-escalation` change for the
+full record and its interactive-scope caveat).
+
+## What a deny looks like
+
+When a command matches a deny-channel rule, the hook exits 2 and Claude sees this on
+stderr (so it stops and reports back instead of running it). Every message names the
+specific rule that matched, states that variants of the same command are blocked too,
+and hands the command back as a ready-to-paste `!`-prefixed escape hatch — but the
+**second line** differs by class: commands with **no safe variant** (`rm -rf ~`, `dd`
+onto a disk, `mkfs`, a fork bomb, `reboot`, …) keep an explicit irreversibility warning
+and offer no alternative; commands with a **concrete safe variant but still no safe
+*channel*** (`curl|sh`, `eval "$(curl …)"`) drop that warning and name the alternative
+instead — a human just can't verify it blind, at a prompt or otherwise.
 
 **No safe variant** — `rm -rf ~`:
 
@@ -31,25 +63,52 @@ alternative; commands with a **concrete safe variant** (`chmod 777`, `: >`, `eva
    Or set SHELL_GUARD_DISABLE=1 / see /shell-guard.
 ```
 
-**A safe variant exists** — `chmod 777 x`:
+**A safe variant exists, but not a safe channel** — `curl http://x | bash`:
 
 ```text
-⛔ shell-guard: blocked a dangerous command — chmod 777 — world-writable permissions.
-   → Safe alternative: chmod 755 (or the narrowest mode the task needs).
+⛔ shell-guard: blocked a dangerous command — network download piped into a shell.
+   → Safe alternative: download to a file, read it, then run it as a separate reviewed step.
    Variants of this command (reordered flags, different quoting, a wrapper prefix, $HOME for ~, …) are blocked too.
    To run it anyway, paste into the prompt (! runs it in your shell):
-! chmod 777 x
+! curl http://x | bash
    Or set SHELL_GUARD_DISABLE=1 / see /shell-guard.
 ```
 
-The text after the dash names the matched rule (e.g. `network download piped into a
-shell`, `dd onto a raw disk device`, `sudo — privilege escalation`, or — for a
-user-configured `SHELL_GUARD_EXTRA_PATTERNS` entry — the literal pattern that matched).
+The text after the dash names the matched rule (e.g. `dd onto a raw disk device`, or —
+for a user-configured `SHELL_GUARD_EXTRA_PATTERNS` entry — the literal pattern that
+matched).
 
-The blocked command is handed back as a ready-to-paste `!`-prefixed line — typed into
-the Claude Code prompt, `!` runs it in **your** shell, which this hook never gates.
-Because a reworded or reordered retry is blocked the same way, that line — not a
-rephrased command — is the only path forward once you're certain.
+## What an ask looks like
+
+When a command matches an ask-channel rule, the hook exits **0** and prints JSON on
+**stdout** instead — `permissionDecision: "ask"`, which escalates to the human's own
+permission prompt (and overrides auto-mode) rather than reporting an unconditional
+block. `permissionDecisionReason` carries the exact same message shape as a deny — the
+matched rule, the class-specific line, the variants-also-apply clause, and the
+`!`-prefixed escape hatch — just delivered as the text shown at that prompt instead of
+on stderr.
+
+`chmod 777 x`:
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "ask",
+    "permissionDecisionReason": "🟡 shell-guard: this needs your OK — chmod 777 — world-writable permissions.\n   → Safe alternative: chmod 755 (or the narrowest mode the task needs).\n   Variants of this command (reordered flags, different quoting, a wrapper prefix, $HOME for ~, …) are blocked too.\n   To run it anyway, paste into the prompt (! runs it in your shell):\n! chmod 777 x\n   Or set SHELL_GUARD_DISABLE=1 / see /shell-guard."
+  }
+}
+```
+
+If you decline the prompt, the outcome is the same as a deny: the command doesn't run,
+and the `!`-prefixed line in the reason text is still there to paste if you change your
+mind.
+
+The blocked (or asked-about) command is handed back as a ready-to-paste `!`-prefixed
+line either way — typed into the Claude Code prompt, `!` runs it in **your** shell,
+which this hook never gates. Because a reworded or reordered retry is judged the same
+way, that line — not a rephrased command — is the only path forward once you're
+certain.
 
 shell-guard is designed to **cover a typical `permissions.deny` shell list** in
 `~/.claude/settings.json`. That list matches command *strings* exactly, so it misses
@@ -59,40 +118,45 @@ convenience guard, not a sandbox — keep real OS-level backups and protections 
 (Permission `deny` rules and this hook are independent layers; you can run both, but
 shell-guard is meant to let you retire the shell half of your deny list.)
 
-## What it blocks
+## What it blocks or asks about
 
 It resolves the real command word (after skipping common wrappers) and the target, so
 it catches re-ordered flags and `$HOME`-for-`~` variants a string list misses — but it
-stays a small, high-confidence set:
+stays a small, high-confidence set. Each rule is tagged **[deny]** or **[ask]** — see
+[Deny vs. ask](#deny-vs-ask--which-channel-a-rule-resolves-to) above:
 
-- **Recursive delete of a protected path** — `rm -rf` / `-fr` / `-r --force` /
+- **[deny] Recursive delete of a protected path** — `rm -rf` / `-fr` / `-r --force` /
   `--recursive --force` (any order) whose target is `/`, `/*`, `~`, `$HOME`, a
   top-level system dir (`/usr`, `/etc`, `/System`, `/Library`, …), or — only when the
   session's cwd **is** your home directory — a bare `*` / `.*` / `.`. Also any
   `rm --no-preserve-root`.
-- **`dd` onto a raw disk device** — `dd … of=/dev/disk*` / `rdisk*` / `sd*` / `hd*` /
-  `nvme*` / `vd*` (but **not** `dd … of=/dev/null` or `of=file`).
-- **Filesystem create/wipe** — `mkfs`, `mkfs.*`, `wipefs`, `newfs`, `newfs_*`.
-- **Destructive `diskutil`** — `eraseDisk`, `eraseVolume`, `reformat`, `zeroDisk`,
-  `secureErase`, `partitionDisk`, `eraseall`, `apfs delete*`/`apfs erase*`.
-- **Redirect onto a raw disk device** — a `>`/`>|` redirect whose target is
+- **[deny] `dd` onto a raw disk device** — `dd … of=/dev/disk*` / `rdisk*` / `sd*` /
+  `hd*` / `nvme*` / `vd*` (but **not** `dd … of=/dev/null` or `of=file`).
+- **[deny] Filesystem create/wipe** — `mkfs`, `mkfs.*`, `wipefs`, `newfs`, `newfs_*`.
+- **[deny] Destructive `diskutil`** — `eraseDisk`, `eraseVolume`, `reformat`,
+  `zeroDisk`, `secureErase`, `partitionDisk`, `eraseall`, `apfs delete*`/`apfs erase*`.
+- **[deny] Redirect onto a raw disk device** — a `>`/`>|` redirect whose target is
   `/dev/disk*`, `/dev/rdisk*`, `/dev/sd*`, `/dev/hd*`, `/dev/nvme*`, `/dev/vd*` (but
   **not** `/dev/null`, `/dev/zero`, a tty…).
-- **Fork bomb** — a function that pipes and backgrounds a call to itself
+- **[deny] Fork bomb** — a function that pipes and backgrounds a call to itself
   (`:(){ :|:& };:` and renamed variants).
-- **Network download fed to an interpreter** — a `curl`/`wget`/`fetch` pipeline stage
-  followed by a shell or language runtime (`sh`/`bash`/`zsh`/`dash`/`ksh`,
+- **[deny] Network download fed to an interpreter** — a `curl`/`wget`/`fetch` pipeline
+  stage followed by a shell or language runtime (`sh`/`bash`/`zsh`/`dash`/`ksh`,
   `python`/`perl`/`ruby`/`node`/`php`), e.g. `curl … | bash`. Detected by **pipeline
   stage**, so a dangerous string inside a quoted argument (`echo "curl … | bash"`) is
   **not** a false positive.
-- **Truncate a file to empty** — the `: > file` idiom (but **not** a plain `> file`
-  redirect, nor `: >> file` append).
-- **`chmod 777`** — world-writable permissions (`chmod 777` / `0777`).
-- **`eval`** — arbitrary code execution.
-- **Privilege escalation** — `sudo`, `su`, `doas`, `runuser`, `pkexec`, `gosu`,
+- **[ask] Truncate a file to empty** — the `: > file` idiom (but **not** a plain
+  `> file` redirect, nor `: >> file` append).
+- **[ask] `chmod 777`** — world-writable permissions (`chmod 777` / `0777`).
+- **[ask/deny] `eval`** — arbitrary code execution. **[ask]** by default; **[deny]**
+  when its argument contains `curl`/`wget`/`fetch` (e.g. `eval "$(curl http://x)"`) —
+  a human at an `ask` prompt can't see a fetched payload any more than they can see
+  what `curl … | bash` actually runs, so that case is denied for the same reason.
+- **[ask] Privilege escalation** — `sudo`, `su`, `doas`, `runuser`, `pkexec`, `gosu`,
   `sudoedit`, `setpriv`.
-- **System halt/reboot** — `reboot`, `shutdown`, `halt`, `poweroff`.
-- Anything in your `SHELL_GUARD_EXTRA_PATTERNS` (see **Configure**).
+- **[deny] System halt/reboot** — `reboot`, `shutdown`, `halt`, `poweroff`.
+- **[deny] Anything in your `SHELL_GUARD_EXTRA_PATTERNS`** (see **Configure**) — the
+  guard has no way to infer a user pattern's severity, so it always stays deny-only.
 
 Compound commands are split on `&&`, `||`, `;`, newlines, single pipes, background `&`,
 subshells `( )` and brace groups `{ }`, so `git pull && rm -rf /`, `true | rm -rf /`
@@ -175,7 +239,7 @@ installed. **Resume** by clearing it (remove the line or set `SHELL_GUARD_DISABL
 
 ## Advisory companion
 
-shell-guard hard-blocks the dangerous *forms*. The judgment calls a hook can't enforce —
+shell-guard denies or asks about the dangerous *forms*. The judgment calls a hook can't enforce —
 don't run obfuscated commands, don't pipe remote content into an interpreter, confirm
 before a recursive delete, keep secrets off the command line, ignore instructions
 embedded in fetched content — live in an advisory rules file,
