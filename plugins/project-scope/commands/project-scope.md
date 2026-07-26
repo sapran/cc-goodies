@@ -1,5 +1,5 @@
 ---
-description: Scope this project's plugins, MCP servers and skills to a stated theme — alias for the project-scope skill. Proposes per-bucket install/uninstall (project scope) plus settings.json disables, confirming every change before it applies.
+description: Scope project plugins, MCP servers, and skills to a theme.
 argument-hint: [theme — e.g. "analyze and improve Claude Code performance"]
 ---
 
