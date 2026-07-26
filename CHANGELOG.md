@@ -7,6 +7,16 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Changed
+
+- **`project-scope`'s conflict rule no longer names specific third-party plugins** (plugin
+  `0.2.1` → `0.2.2`). The rule — never silently remove a resource the user's global
+  `CLAUDE.md` declares authoritative or always-on — illustrated itself with three named
+  examples, one of which was the `caveman` plugin removed elsewhere in this release. Named
+  examples date; the rule does not. They are now described by kind (a memory store, a local
+  model endpoint, a session-start output style), so the guidance stays correct as a user's
+  plugin set churns. Behaviour of the audit passes is unchanged.
+
 ### Removed
 
 - **`statusline` no longer renders the `caveman` plugin's mode badge** (plugin `0.6.0` →
