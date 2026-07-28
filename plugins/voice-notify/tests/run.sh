@@ -73,7 +73,14 @@ pending_add()   { mkdir -p "$work/vn-sess.pending.d"; printf '%s\n%s\n' "$(now)"
 batch_reset()   { rm -rf "$work/vn-sess.batch.d"; }
 batch_add()     { mkdir -p "$work/vn-sess.batch.d"; printf '%s' "$(now)" > "$work/vn-sess.batch.d/$1"; }
 flags_reset()   { rm -f "$work/vn-sess.waited" "$work/vn-sess.capped"; }
-all_reset()     { spawn_reset; agents_reset; pending_reset; batch_reset; flags_reset; rm -f "$work/vn-sess.dispatch"; }
+# 0.7.0 state: the busy marker the idle Notification consults, since its payload carries no
+# in-flight task list of its own.
+busy_reset()    { rm -f "$work/vn-sess.busy"; }
+busy_set()      { printf '%s' "${1:-$(now)}" > "$work/vn-sess.busy"; }
+busy_is_set()   { [ -f "$work/vn-sess.busy" ]; }
+all_reset()     { spawn_reset; agents_reset; pending_reset; batch_reset; flags_reset; busy_reset; rm -f "$work/vn-sess.dispatch"; }
+# One in-flight task of a given type, as the harness reports it.
+bg_task()       { printf '{"session_id":"sess","background_tasks":[{"id":"t1","type":"%s","status":"running","description":"some work"}]}' "$1"; }
 # Substring assertions: `has <needle> <label>` / `has_any <label> <needle>...`.
 has() { case "$spoke" in *"$1"*) ok "$2" ;; *) no "$2" "$spoke" ;; esac; }
 hasnt() { case "$spoke" in *"$1"*) no "$2" "$spoke" ;; *) ok "$2" ;; esac; }
@@ -407,18 +414,18 @@ rec=$(sed -n '2p' "$work/vn-sess.agents.d/bg1" 2>/dev/null)
 all_reset
 run agent-result "$J_FG_DONE"
 has "Count to three —" "foreground completion is named when the result returns"
-hasnt "didn't finish" "a completed agent uses the success pool"
+has_any "a completed agent uses the success pool" "— done." "— finished." "— is back." "— wrapped up."
 
 all_reset
 run agent-result "$J_FG_FAIL"
-has_any "a failed agent uses the failure pool" "didn't finish" "came back empty" "no result from that one"
+has_any "a failed agent uses the failure pool" "didn't finish" "has failed" "no result from that one"
 
 # PostToolUseFailure carries tool_input but no tool_response at all (an interrupted or errored
 # agent tool call). The same arm must still name it and route it to the failure pool.
 all_reset
 run agent-result '{"session_id":"sess","tool_name":"Agent","tool_input":{"description":"Count to three"},"tool_use_id":"t1","error":"interrupted","is_interrupt":true}'
 has "Count to three" "an interrupted agent is still named"
-has_any "an interrupted agent uses the failure pool" "didn't finish" "came back empty" "no result from that one"
+has_any "an interrupted agent uses the failure pool" "didn't finish" "has failed" "no result from that one"
 
 # --- subagent-stop: background agents are voiced here, foreground ones are not ---
 all_reset
@@ -447,7 +454,7 @@ has_any "anonymous cue when nothing identifies the agent" "A helper's done." "On
 
 all_reset
 run subagent-stop "$J_BG_EMPTY"
-has_any "an empty result uses the failure pool" "didn't finish" "came back empty" "no result from that one"
+has_any "an empty result uses the failure pool" "didn't finish" "has failed" "no result from that one"
 
 # --- name cap and the drain roll-up ---
 all_reset
@@ -488,6 +495,101 @@ hasnt "helpers aren't done" "an empty task list overrides a stale marker count"
 has_any "empty task list -> a real sign-off" "Okay, that took a bit, but it's done." \
   "Phew, finally done." "That one took a while. All wrapped up." "Done at last." \
   "Took some doing, but it's finished." "All done. Thanks for waiting."
+
+# --- Which kinds of background work hold off the sign-off ---
+# The harness reports nine types in background_tasks. Everything except a background shell and a
+# monitor is work the session is genuinely waiting on.
+wait_cue() {   # wait_cue <label> : the spoken line came from the waiting pool
+  has_any "$1" "the helpers aren't done yet" "the agents are still working" \
+    "the sub-agents are still running" "Holding for the helpers to finish" \
+    "Agents still busy" "Work's still out with the helpers"
+}
+long_signoff() {   # long_signoff <label> : the spoken line came from the long turn-end pool
+  has_any "$1" "Okay, that took a bit, but it's done." "Phew, finally done." \
+    "That one took a while. All wrapped up." "Done at last." \
+    "Took some doing, but it's finished." "All done. Thanks for waiting."
+}
+
+for t in workflow teammate "cloud session" "MCP task" dream "auto-mode scan" "some-future-type"; do
+  all_reset
+  stamp "$(( $(now) - 300 ))"
+  run stop "$(bg_task "$t")"
+  wait_cue "stop with a '$t' in flight -> waiting cue"
+done
+
+for t in shell monitor; do
+  all_reset
+  stamp "$(( $(now) - 300 ))"
+  run stop "$(bg_task "$t")"
+  long_signoff "stop with only a '$t' in flight -> real sign-off"
+  busy_is_set && no "'$t' wrote a busy marker" "present" || ok "a '$t' leaves no busy marker"
+done
+
+# --- The busy marker and the idle notification ---
+all_reset
+stamp "$(( $(now) - 300 ))"
+run stop "$(bg_task workflow)"
+busy_is_set && ok "stop with work outstanding writes the busy marker" || no "no busy marker" "missing"
+run notification "$J_IDLE"
+[ -z "$spoke" ] && ok "idle notification is silent while work is outstanding" || no "idle spoke while busy" "$spoke"
+
+# ...and every other notification subtype still speaks, because each is still true.
+run notification "$J_PERM"
+has "I need your permission" "a permission request still speaks while work is outstanding"
+run notification '{"session_id":"sess","notification_type":"agent_needs_input","message":"Explore agent needs your input: which branch?"}'
+has "needs your input" "an agent asking for input still speaks while work is outstanding"
+run notification '{"session_id":"sess","notification_type":"agent_completed","message":"Review script changes finished"}'
+has "Review script changes finished" "an agent completion still speaks while work is outstanding"
+run notification "$J_WEIRD"
+has "I need your attention" "the neutral fallback still speaks while work is outstanding"
+
+stamp "$(( $(now) - 300 ))"
+run stop '{"session_id":"sess","background_tasks":[]}'
+busy_is_set && no "empty task list left the busy marker" "present" || ok "an empty task list clears the busy marker"
+run notification "$J_IDLE"
+has "I'm waiting for your input" "idle notification speaks once the work has drained"
+
+# The last background agent draining is what turns "still working" back into "idle" — Stop has
+# already happened by then, so SubagentStop has to clear the marker itself.
+all_reset
+busy_set
+run subagent-stop '{"session_id":"sess","agent_id":"a1","last_assistant_message":"done","background_tasks":[{"id":"a1","type":"subagent","status":"running","description":"review the diff"}]}'
+busy_is_set && no "last agent left the busy marker" "present" || ok "the last background agent draining clears the busy marker"
+
+all_reset
+busy_reset
+run subagent-stop '{"session_id":"sess","agent_id":"a1","last_assistant_message":"done","background_tasks":[{"id":"a1","type":"subagent","status":"running","description":"review the diff"},{"id":"w1","type":"workflow","status":"running","description":"migrate"}]}'
+busy_is_set && ok "work still outstanding at SubagentStop keeps the busy marker" || no "marker cleared too early" "missing"
+
+# Naming off must not skip the refresh: the idle gate has to stay accurate either way.
+export CLAUDE_VOICE_NOTIFY_AGENT_NAMES=off
+all_reset
+busy_set
+run subagent-stop '{"session_id":"sess","agent_id":"a1","last_assistant_message":"done","background_tasks":[{"id":"a1","type":"subagent","status":"running","description":"review the diff"}]}'
+busy_is_set && no "naming off skipped the refresh" "present" || ok "naming off still refreshes the busy marker"
+unset CLAUDE_VOICE_NOTIFY_AGENT_NAMES
+
+all_reset
+busy_set
+run start "$J_SESS"
+busy_is_set && no "start left the busy marker" "present" || ok "a new user prompt clears the busy marker"
+
+all_reset
+busy_set "$(( $(now) - 7200 ))"       # older than the 3600s in-flight TTL
+run notification "$J_IDLE"
+has "I'm waiting for your input" "a stale busy marker does not mute the idle cue"
+
+export CLAUDE_VOICE_NOTIFY_SUBAGENT=off
+all_reset
+busy_set
+run notification "$J_IDLE"
+has "I'm waiting for your input" "subagent path off -> the idle cue is never gated"
+all_reset
+stamp "$(( $(now) - 300 ))"
+run stop "$(bg_task workflow)"
+busy_is_set && no "subagent path off wrote a busy marker" "present" || ok "subagent path off -> no busy marker is written"
+unset CLAUDE_VOICE_NOTIFY_SUBAGENT
+all_reset
 
 # --- description sanitisation ---
 all_reset
