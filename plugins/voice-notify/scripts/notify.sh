@@ -677,8 +677,11 @@ nag_due() {
 # watcher exits instead of spinning until a command it can no longer speak about finishes. A
 # later command or prompt elects a fresh watcher, so exiting early costs nothing.
 watch_pending() {
-  local sid="$1" n=0 f id count
-  if [ "$cmds" = "on" ] && [ "$cmd_running" -gt 0 ]; then
+  local sid="$1" n=0 f id count blocked=""
+  # Mirrors the watch loop: while a prompt is outstanding, commands are not announceable, so they
+  # are not work this watcher can act on. The reminders themselves keep it alive.
+  [ "$(count_dir "$(perm_dir "$sid")")" -gt 0 ] && blocked=1
+  if [ "$cmds" = "on" ] && [ "$cmd_running" -gt 0 ] && [ -z "$blocked" ]; then
     for f in "$(cmd_dir "$sid")"/*; do
       [ -e "$f" ] || continue
       id=${f##*/}
@@ -716,7 +719,13 @@ watch_loop() {
     prune_dir "$(cmdsaid_dir "$sid")" "$cutoff"
     prune_dir "$(perm_dir "$sid")" "$cutoff"
 
-    if [ "$cmds" = "on" ] && [ "$cmd_running" -gt 0 ]; then
+    # PreToolUse fires *before* the permission dialog, so a command marker exists from the moment
+    # a call is proposed — not from when it starts running. While a prompt is outstanding the
+    # session is blocked and nothing is executing, so announcing "still running" would be false.
+    # Verified against 2.1.220: a denied tool produces PreToolUse and nothing else at all.
+    blocked=""
+    [ "$(count_dir "$(perm_dir "$sid")")" -gt 0 ] && blocked=1
+    if [ "$cmds" = "on" ] && [ "$cmd_running" -gt 0 ] && [ -z "$blocked" ]; then
       for f in "$(cmd_dir "$sid")"/*; do
         [ -e "$f" ] || continue
         id=${f##*/}
@@ -796,6 +805,14 @@ disarm_perm() {
   rm -f "$(perm_dir "$1")/pending" 2>/dev/null
   [ -n "$2" ] || return 0
   rm -f "$(perm_dir "$1")/$2" 2>/dev/null
+}
+
+# drop_cmd <sid> <tool_use_id>: forget a proposed command. A call that is refused never reaches
+# PostToolUse — the harness fires PreToolUse and nothing else — so without this its marker would
+# survive to the TTL and then be announced as a command that never ran.
+drop_cmd() {
+  [ -n "$2" ] || return 0
+  rm -f "$(cmd_dir "$1")/$2" "$(cmdsaid_dir "$1")/$2" 2>/dev/null
 }
 
 # Map a Notification message to (subtype, first-person reason). Allow-list only:
@@ -1371,7 +1388,9 @@ EOF
     command -v jq >/dev/null 2>&1 || exit 0
     sid=$(session_id)
     [ -n "$sid" ] || sid="nosess"
-    disarm_perm "$sid" "$(tool_use_id)"
+    ptuid=$(tool_use_id)
+    disarm_perm "$sid" "$ptuid"
+    drop_cmd "$sid" "$ptuid"
     exit 0
     ;;
 

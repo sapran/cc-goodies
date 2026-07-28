@@ -1048,5 +1048,34 @@ CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL=60 run stop "$(j_stop_bt "$(bt_shell other)")"
 bg_has btold && no "a stale background record survived" "(still present)" || ok "a stale background record is pruned"
 cmd_reset; all_reset
 
+# --- PreToolUse precedes the permission dialog ------------------------------------------------
+# Verified against 2.1.220: a denied tool fires PreToolUse and nothing else — no PostToolUse, no
+# PostToolUseFailure, not even PermissionDenied. So a command marker exists from the moment a call
+# is proposed, not from when it starts running.
+
+# A command waiting on an unanswered prompt must not be called "still running".
+cmd_reset
+cmd_add w1 "$(( $(now) - 100 ))" 'Run the test suite'
+perm_add pending "$(now)" 'Bash' 0 "$(now)"
+CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER=1 CLAUDE_VOICE_NOTIFY_NAG_EVERY=1 CLAUDE_VOICE_NOTIFY_NAG_MAX=1 \
+  run cmd-start "$(j_pre w2 'Another command' '')"
+hasnt "Run the test suite" "a command blocked on a permission prompt is not called still running"
+
+# With no prompt outstanding the same command is announced normally.
+cmd_reset
+cmd_add w3 "$(( $(now) - 100 ))" 'Run the test suite'
+CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER=1 run cmd-start "$(j_pre w4 'Another command' '')"
+has "Run the test suite" "the same command is announced once nothing is blocked"
+
+# A refused call leaves no marker to surface later as a phantom cue.
+cmd_reset
+cmd_add w5 "$(now)" 'Write a file'
+cmd_said w5
+run perm-denied '{"session_id":"sess","hook_event_name":"PermissionDenied","tool_name":"Write","tool_use_id":"w5"}'
+cmd_has w5 && no "a refused call left its marker behind" "(still present)" || ok "a refused call drops its command marker"
+[ -f "$work/vn-sess.cmdsaid.d/w5" ] && no "a refused call left its announced marker" "(still present)" \
+  || ok "a refused call drops its announced marker"
+cmd_reset; all_reset
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

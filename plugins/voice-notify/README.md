@@ -280,6 +280,20 @@ when the dialog opens and repeats it every `CLAUDE_VOICE_NOTIFY_NAG_EVERY` secon
 (default 60), naming the tool: *"Still waiting on you — I still need your permission to use
 Bash."*
 
+**Known limitation.** Claude Code fires `PreToolUse` *before* the permission dialog, and a call
+you refuse fires nothing afterwards at all — no `PostToolUse`, no `PostToolUseFailure`, not even
+`PermissionDenied`. voice-notify therefore cannot see the moment a prompt is *approved*. Two
+consequences, both bounded and both cosmetic:
+
+- While a prompt is outstanding the session is blocked, so the still-running command cue is
+  suppressed — correct while you are away, but it also stays suppressed for a command you
+  approved and which is now genuinely running.
+- A prompt you approve for a long command keeps its reminder armed until that command finishes,
+  so you may hear up to `CLAUDE_VOICE_NOTIFY_NAG_MAX` reminders during a run you already
+  authorised. Lower that knob, or set `CLAUDE_VOICE_NOTIFY_NAG_EVERY=0`, if it bothers you.
+
+Neither arises if you run with an allowlist or in a permissive mode, since no dialog appears.
+
 The reminder is armed by the **same `Notification` that speaks the first request** — the event
 this plugin has used for permission prompts since 0.3.0, and therefore the one it can rely on.
 Claude Code also has a `PermissionRequest` event carrying the exact `tool_use_id`, and that is
