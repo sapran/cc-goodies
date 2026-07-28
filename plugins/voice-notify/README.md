@@ -10,6 +10,10 @@ Spoken notifications for Claude Code on macOS. Claude tells you — in the first
 - **When the batch drains**: a roll-up (*"All five helpers are back."*) — but only when something was left unsaid, i.e. you were told to wait, or the cap suppressed the individual cues. A small fan-out that was named all the way through has already told you everything, so it gets no roll-up.
 - **When the turn ends but work is still running** (`Stop` with **background** work in flight — subagents, a workflow, a teammate, a cloud session): a distinct *waiting* cue (*"Still going, the helpers aren't done yet."*) instead of a turn-end sign-off — so a main session that goes idle while its background work keeps going never says "All done" prematurely. The real sign-off waits until nothing is in flight, and the roll-up closes the loop when the last agent lands. (Blocking/foreground subagents finish before the turn ends, so they never trigger it. A background shell command and a monitor are deliberately not counted — see *Waiting-on-background-work cue*.)
 - **When a long turn finishes** (`Stop`, nothing in flight): a sign-off, e.g. *"All done."*, *"Your turn."*, *"That's a wrap."* — and for a turn you clearly waited on, one that acknowledges it (*"Okay, that took a bit, but it's done."*). **Quick turns stay silent** (see *Quiet on quick turns* below), so you only hear "done" for the work you stepped away from.
+- **When a shell command runs long** (`PreToolUse`/`PostToolUse` on `Bash`): a cue while it is *still* running (*"Still running: run the test suite."*) and another when it finishes (*"Run the test suite — done."*), with distinct phrasing for a failure, a timeout and an interruption. Both are **gated on how long the command actually ran**, so the dozens of quick commands in a normal turn stay silent — see *Command cues*. Only the model's own short **description** is ever spoken; the command line itself never is.
+- **When a background command finishes** (`Stop`): a cue naming it (*"That background job is done: start the dev server."*). Claude Code fires no completion event for a background command, so this is noticed at a turn boundary — see *Background commands*.
+- **When the turn dies on an API error** (`StopFailure`): a *stalled* cue naming the cause (*"I've stalled — I'm being rate limited."*). Without this the session simply goes quiet forever, because a failed turn never fires `Stop`.
+- **When a permission prompt goes unanswered**: the request is repeated on an interval (*"Still waiting on you — I still need your permission to use Bash."*) until you answer it, up to a bounded number of times — see *Blocked sessions*.
 
 Each cue is composed from small phrase pools and *sometimes* gets a lead-in (about 40% of the time, joined by a brief spoken pause) — so it varies in both wording and cadence and never settles into a formula.
 
@@ -40,7 +44,12 @@ Set these as environment variables (shell profile, or Claude Code's `env` settin
 | `CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL` | Seconds after which an in-flight subagent marker is treated as stale and pruned (default `3600`), so a subagent that never reports completion (a crash, or a denied dispatch) can't wedge the count into a permanent *waiting* state. The same limit ages out the marker that keeps the idle cue quiet. |
 | `CLAUDE_VOICE_NOTIFY_AGENT_NAMES=off` | Turn off naming: anonymous hand-off cues, no completion cues, no roll-up — the pre-0.6.0 behaviour, with the waiting cue and sign-off unchanged. |
 | `CLAUDE_VOICE_NOTIFY_AGENT_NAME_CAP` | Name individual completions only while at most this many subagents are in flight (default `3`). Above it, completions go quiet and the batch gets one roll-up instead. |
-| `CLAUDE_VOICE_NOTIFY_AGENT_DESC_MAX` | Characters of an agent's description to speak (default `60`), truncated at a word boundary. |
+| `CLAUDE_VOICE_NOTIFY_AGENT_DESC_MAX` | Characters of a description to speak (default `60`), truncated at a word boundary. Applies to agent *and* command descriptions — they go through one shared sanitising path. |
+| `CLAUDE_VOICE_NOTIFY_CMD=off` | Disable the whole shell-command path — the still-running cue, the completion cues, the background-command cue, the watcher and all command state. Permission reminders are **not** affected (they're useful with command cues off), and every other cue is unchanged. |
+| `CLAUDE_VOICE_NOTIFY_CMD_QUIET_UNDER` | Seconds below which a finished command is *not* announced (default `60`). Same idea as `QUIET_UNDER`, applied per command instead of per turn. `0` announces every command. |
+| `CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER` | Seconds after which a command that is still running is announced (default `45`). `0` disables the still-running cue only; completion cues keep working. |
+| `CLAUDE_VOICE_NOTIFY_NAG_EVERY` | Seconds between reminders while a permission prompt sits unanswered (default `60`). `0` disables reminders — the prompt is still announced once, as before. |
+| `CLAUDE_VOICE_NOTIFY_NAG_MAX` | How many times a single prompt is re-announced before it gives up (default `5`), so an unattended session doesn't talk all night. |
 
 ### Pause / mute
 
@@ -188,6 +197,94 @@ subagent that never reports completion — a crash, or a dispatch you denied —
 leave that tally stuck, so markers older than `CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL` seconds
 (default `3600`) are pruned. Nothing is written outside `$TMPDIR` and the plugin's own
 directory, so `/plugin uninstall` remains a complete revert.
+
+### Command cues
+
+A session runs dozens of shell commands per turn and almost all of them finish in under a
+second, so announcing dispatch — the way the subagent path does — would be constant chatter.
+A command cue is therefore **earned by how long the command actually ran**, never by the fact
+that it ran:
+
+- **Still running.** A command in flight past `CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER` seconds
+  (default 45) is announced once: *"Still running: run the test suite."*
+- **Finished.** A command that ran at least `CLAUDE_VOICE_NOTIFY_CMD_QUIET_UNDER` seconds
+  (default 60) is announced when it completes: *"Run the test suite — done."* A failure, a
+  timeout and an interruption each get their own phrasing, read from the failure event's own
+  `is_timeout` and `is_interrupt` flags rather than guessed.
+- **Announced means reported.** A command that got the still-running cue *always* gets its
+  completion cue, whatever the threshold would otherwise say. Having been told something is
+  running, you are never left without the all-clear.
+
+**Only the description is spoken — never the command.** The cue uses the short human-readable
+`description` Claude writes for the tool call. The command line itself is never passed to the
+speech engine: it routinely contains tokens, hostnames and paths, and reading it aloud would be
+both unintelligible and a way to leak a credential to the room. When no description is
+available the cue falls back to an anonymous form — still never the command.
+
+#### The watcher
+
+Claude Code fires no hook *while* a command runs, so the still-running cue needs something
+alive during the quiet. The obvious approach — an async hook per `Bash` call that sleeps and
+then checks — costs one sleeping process per command, which in a busy session is hundreds.
+
+Instead each dispatch writes a marker and then *attempts* a create-only election; only the
+winner loops. It polls every few seconds, speaks for any command past the threshold and any
+reminder that has come due, and **exits as soon as nothing is left that it could say** — every
+running command already announced, every reminder at its cap. The next command or prompt elects
+a fresh watcher. So there is one poller while there is something to watch and none otherwise.
+
+An election left behind by a killed process is reclaimed by age, exactly as the speech lock is,
+so the feature cannot be wedged into permanent silence. Claude Code kills hook processes when
+the session ends, which in practice is what bounds the watcher; `WATCH_MAX_LIFE` in the script
+is the belt-and-braces stop. In a **headless** (`claude -p`) run the session ends with the turn,
+so the still-running cue simply doesn't fire — there is nobody listening anyway.
+
+### Background commands
+
+A command started with `run_in_background` is a different problem: Claude Code has **no
+completion event for it at all**. The full `notification_type` list is `permission_prompt`,
+`idle_prompt`, `auth_success`, three elicitation types, `agent_needs_input` and
+`agent_completed` — nothing for a shell command. Its completion is not an event, it is an
+*absence*.
+
+So voice-notify records the `backgroundTaskId` the launch returns, together with the command's
+purpose, and watches the `background_tasks` list that `Stop` and `SubagentStop` already carry.
+An id that was recorded and is no longer listed has finished, and is announced by name:
+*"That background job is done: start the dev server."*
+
+Two consequences worth knowing:
+
+- **It is reported at a turn boundary**, not the instant the command exits. In practice a
+  finishing background command usually wakes the session anyway, so the cue tends to follow
+  quickly — but it is not a real-time signal and is phrased so it doesn't pretend to be.
+- **A running background command still does not count as outstanding work.** It does not
+  suppress the turn-end sign-off and writes no busy marker, exactly as before. Announcing a
+  completion and gating the sign-off are separate decisions: a dev server you started once must
+  never mute *"All done"* for the rest of the session.
+
+### Blocked sessions
+
+Two states leave a session waiting with nothing to say for itself. Both are now voiced.
+
+**A turn killed by an API error.** When a turn ends because of a rate limit, an overload, an
+authentication or billing problem, or a response that hit its output limit, Claude Code fires
+`StopFailure` — **not** `Stop`. Nothing spoke for it before, so a session that died this way
+simply went quiet and stayed quiet. It now speaks a distinct *stalled* cue naming the cause
+(*"I've stalled — I'm being rate limited."*), and it ignores the quiet-on-quick-turns gate: a
+turn that died is worth reporting however briefly it ran.
+
+**A permission prompt you didn't answer.** The prompt is announced once when it appears; miss
+that one cue and the session waits indefinitely in silence. voice-notify now arms a reminder
+when the dialog opens and repeats it every `CLAUDE_VOICE_NOTIFY_NAG_EVERY` seconds
+(default 60), naming the tool: *"Still waiting on you — I still need your permission to use
+Bash."*
+
+The reminder stops the moment the prompt is resolved — approving it makes the tool run, and
+that completion disarms the reminder; denying it fires the denial event, which does the same;
+and submitting a new prompt clears every pending reminder, because you are demonstrably back.
+It is also **bounded**: after `CLAUDE_VOICE_NOTIFY_NAG_MAX` repeats (default 5) it gives up, and
+a record older than the TTL is pruned regardless, so an unanswered prompt at 2am cannot talk
+until morning.
 
 ## Prerequisites
 
