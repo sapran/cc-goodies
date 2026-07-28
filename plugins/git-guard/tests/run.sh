@@ -84,18 +84,19 @@ reason_for() {
 
 # Clause checks shared by BOTH channels — $1 is the human-visible text for the
 # channel under test (stderr for a deny, the parsed permissionDecisionReason for
-# an ask), $2 the command. Sets msg_ok/msg_detail in the caller's scope.
+# an ask), $2 the command, $3 the variants wording that channel must use.
+# Sets msg_ok/msg_detail in the caller's scope.
+#
+# $3 is passed per channel rather than accepting either wording: deny() says
+# variants "are blocked too" and ask() says they "are judged the same way" —
+# each accurate for its own channel. Accepting either here would let a deny
+# regress into the ask wording (or the reverse) without failing.
 check_common_clauses() {
-  ctext="$1"; ccmd="$2"
+  ctext="$1"; ccmd="$2"; cvariants="$3"
   case "$ctext" in *"! $ccmd"*) ;; *) msg_ok=0; msg_detail="$msg_detail no-escape-hatch-line" ;; esac
   case "$ctext" in *"Protected: main master."*) ;; *) msg_ok=0; msg_detail="$msg_detail no-protected-list" ;; esac
   case "$ctext" in *"GIT_GUARD_DISABLE=1"*) ;; *) msg_ok=0; msg_detail="$msg_detail no-disable-pointer" ;; esac
-  # deny() says variants "are blocked too"; ask() says they "are judged the same
-  # way" — accurate per channel, so accept either wording.
-  case "$ctext" in
-    *"are blocked too"*|*"are judged the same way"*) ;;
-    *) msg_ok=0; msg_detail="$msg_detail no-variants-clause" ;;
-  esac
+  case "$ctext" in *"$cvariants"*) ;; *) msg_ok=0; msg_detail="$msg_detail no-variants-clause[want:$cvariants]" ;; esac
   rp=$(reason_for "$id")
   if [ -n "$rp" ]; then
     case "$ctext" in *"$rp"*) ;; *) msg_ok=0; msg_detail="$msg_detail unexpected-reason[want:$rp]" ;; esac
@@ -156,7 +157,7 @@ while IFS="$tab" read -r id branch expect command; do
   case "$expect" in
     2)
       if [ "$got" = "2" ]; then
-        check_common_clauses "$err" "$cmd"
+        check_common_clauses "$err" "$cmd" "are blocked too"
         case "$out" in "") ;; *) msg_ok=0; msg_detail="$msg_detail unexpected-stdout-json" ;; esac
       fi
       ;;
@@ -166,7 +167,7 @@ while IFS="$tab" read -r id branch expect command; do
         pd=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // ""' 2>/dev/null)
         reason=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""' 2>/dev/null)
         case "$pd" in ask) ;; *) msg_ok=0; msg_detail="$msg_detail bad-permissionDecision[$pd]" ;; esac
-        check_common_clauses "$reason" "$cmd"
+        check_common_clauses "$reason" "$cmd" "are judged the same way"
       fi
       ;;
     0)
