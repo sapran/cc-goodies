@@ -407,18 +407,18 @@ rec=$(sed -n '2p' "$work/vn-sess.agents.d/bg1" 2>/dev/null)
 all_reset
 run agent-result "$J_FG_DONE"
 has "Count to three —" "foreground completion is named when the result returns"
-hasnt "didn't finish" "a completed agent uses the success pool"
+has_any "a completed agent uses the success pool" "— done." "— finished." "— is back." "— wrapped up."
 
 all_reset
 run agent-result "$J_FG_FAIL"
-has_any "a failed agent uses the failure pool" "didn't finish" "came back empty" "no result from that one"
+has_any "a failed agent uses the failure pool" "didn't finish" "has failed" "no result from that one"
 
 # PostToolUseFailure carries tool_input but no tool_response at all (an interrupted or errored
 # agent tool call). The same arm must still name it and route it to the failure pool.
 all_reset
 run agent-result '{"session_id":"sess","tool_name":"Agent","tool_input":{"description":"Count to three"},"tool_use_id":"t1","error":"interrupted","is_interrupt":true}'
 has "Count to three" "an interrupted agent is still named"
-has_any "an interrupted agent uses the failure pool" "didn't finish" "came back empty" "no result from that one"
+has_any "an interrupted agent uses the failure pool" "didn't finish" "has failed" "no result from that one"
 
 # --- subagent-stop: background agents are voiced here, foreground ones are not ---
 all_reset
@@ -447,7 +447,7 @@ has_any "anonymous cue when nothing identifies the agent" "A helper's done." "On
 
 all_reset
 run subagent-stop "$J_BG_EMPTY"
-has_any "an empty result uses the failure pool" "didn't finish" "came back empty" "no result from that one"
+has_any "an empty result uses the failure pool" "didn't finish" "has failed" "no result from that one"
 
 # --- name cap and the drain roll-up ---
 all_reset

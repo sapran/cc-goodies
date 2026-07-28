@@ -228,11 +228,11 @@ Work's still out with the helpers."
 # varies the tail. Distinct pools for a clean finish and one that came back with nothing.
 DONE_SUFFIXES="— done.
 — finished.
-— that one's back.
-— all wrapped up."
+— is back.
+— wrapped up."
 
 FAIL_SUFFIXES="— that one didn't finish.
-— that one came back empty.
+— that one has failed.
 — no result from that one."
 
 # Used when a completion can't be attributed to any purpose or agent type.
