@@ -54,6 +54,17 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
+# Every split in this script — segments, pipeline stages, subshell bodies, the
+# EXTRA pattern list — goes through awk. Without it each of those yields nothing
+# and the matching loop simply never runs, so no arm is ever evaluated and the
+# script falls through to `exit 0`: the guard silently stops guarding. Fail OPEN
+# like the jq path (blocking every Bash call over a missing dependency is worse
+# than not guarding), but say so, so the gap is visible rather than silent.
+if ! command -v awk >/dev/null 2>&1; then
+  echo "shell-guard: awk not found; guard disabled (cannot split the command)." >&2
+  exit 0
+fi
+
 # Defence in depth: only act on the Bash tool.
 tool=$(printf '%s' "$input" | jq -r '.tool_name // ""')
 [ "$tool" = "Bash" ] || exit 0
@@ -422,11 +433,21 @@ EOF_STAGE
 # does NOT exit here (see ask()'s own comment) — the loop runs to completion
 # so a deny in a LATER segment still wins; only once every segment has been
 # scanned clean of any deny do we emit whichever ask was recorded first.
+segments=$(printf '%s\n' "$cmd" | awk '{gsub(/&&|\|\||;/,"\n")}1')
+
+# awk exists (checked at the top) but the call can still fail at runtime. $cmd
+# is non-empty, so an empty split means exactly that — and an empty split would
+# otherwise skip the loop below and reach `exit 0` as a silent allow.
+if [ -z "$segments" ]; then
+  echo "shell-guard: could not split the command (awk failed); guard skipped." >&2
+  exit 0
+fi
+
 while IFS= read -r seg; do
   [ -n "$seg" ] || continue
   evaluate_segment "$seg" || exit 2
 done <<EOF
-$(printf '%s\n' "$cmd" | awk '{gsub(/&&|\|\||;/,"\n")}1')
+$segments
 EOF
 
 if [ "$ASK_PENDING" = 1 ]; then

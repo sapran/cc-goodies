@@ -7,6 +7,93 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-28
+
+### Fixed
+
+- **`shell-guard` no longer stops guarding in silence when `awk` is unavailable** (plugin
+  `0.4.1` → `0.4.2`). Every split in the script — segments, pipeline stages, subshell
+  bodies, the `SHELL_GUARD_EXTRA_PATTERNS` list — goes through `awk`. Without it each split
+  yields nothing, no arm is ever evaluated, and the hook falls through to `exit 0`,
+  indistinguishable from a clean allow: `rm -rf /` would pass unremarked.
+
+  It still fails open, matching the existing missing-`jq` behaviour, because blocking every
+  Bash call over a missing dependency is worse than not guarding. But it now says so, which
+  is the whole point — the previous behaviour was the worst of both, an unguarded shell that
+  looked guarded. A second check catches an `awk` that is present but fails at run time.
+  The same fix is applied to `git-guard`. Both harnesses gained fail-open-and-warn cases.
+
+### Added
+
+- **`git-guard` gains an opt-in ask channel for on-branch writes** (plugin `0.2.4` →
+  `0.3.0`). `GIT_GUARD_LOCAL_WRITE_CHANNEL=ask` routes a `commit`, `merge`, `pull`,
+  `rebase`, `cherry-pick`, `revert`, `am`, or history-moving `reset` made **while on** a
+  protected branch to your own permission prompt, instead of blocking it outright. The
+  default is `deny`, so nothing changes for anyone who does not set it.
+
+  This does not overturn Decision D2 of `guard-ask-escalation`, which rejected an ask
+  channel for `git-guard`. D2 still sets the default. What it conflated was *what the
+  default should be* with *whether the channel is expressible at all* — `git-guard`
+  already lets you configure which branches are protected and how strict pushing is, so
+  the channel was the one dimension hard-coded into the script. A user whose convention is
+  "a local commit on `main` is fine, just never push it" previously had only two options:
+  accept the full deny, or `GIT_GUARD_DISABLE=1`, which also switches off the push arms
+  they wanted to keep.
+
+  **Two arms stay deny-only and are not configurable — permanently, not pending a future
+  setting:**
+
+  - **Every push.** A human at an ask prompt cannot judge a push. The command text does
+    not disclose remote state, so it cannot show whether the push fast-forwards or
+    overwrites someone else's commits, and a destination-less `git push` does not even
+    name its target branch (the guard resolves that from `push.default` and
+    `remote.<remote>.push`). This is the same "can't approve what you can't see" criterion
+    that keeps `curl … | bash` on `shell-guard`'s deny channel. A push also leaves the
+    machine, so unlike a local write the reflog cannot undo it.
+  - **A force `git branch -f|-D|-M|-C` naming a protected branch**, even though the script
+    classifies it alongside local writes internally. It retargets a branch pointer while
+    you are on some other branch — not the "I forgot to switch branches" accident this
+    setting exists to soften — and it was closed as a bypass path once already.
+
+  The setting **fails closed**: only the exact lowercase `ask` enables it, so `ASK`, `Ask`,
+  `yes`, `1`, or an empty value all mean `deny`. This is deliberately the opposite of how
+  `GIT_GUARD_DISABLE` and `GIT_GUARD_BLOCK_ALL_PUSH` parse, where "set to anything but 0"
+  turns on the *stricter* behaviour; here the non-default value is the looser one.
+
+  The ask output reuses `shell-guard`'s existing contract — `permissionDecision: "ask"` on
+  stdout, exit 0, the same `!`-prefixed paste-to-override line — and keeps `shell-guard`'s
+  severity discipline: a deny anywhere in a compound command still outranks an ask
+  recorded earlier, and two ask-class segments emit exactly one decision object.
+
+  **If the ask cannot be delivered, the guard denies rather than allowing.** `jq` is
+  present (the hook exits without it), but the emit call itself can fail — `--arg` carries
+  the whole command into the argument list, so a large enough tool call exceeds `ARG_MAX`.
+  That previously produced exit 0 with no decision object, which the harness reads as a
+  plain allow: the same command denied on the default channel but ran silently on the ask
+  channel. A guard that cannot deliver its ask has made no decision, so it now falls back
+  to the deny channel.
+
+  **The prompt does not over-promise.** Approving a `permissionDecision: "ask"` releases
+  the *whole* Bash command, but the guard classified only one segment of it. The reason
+  text scopes its assurance to the matched write and to pushes the guard can resolve, and
+  says plainly that approving releases the entire command line — rather than claiming
+  nothing will be published, which a compound command containing a form the guard does not
+  resolve (`bash -c "…"`, `sudo -u`) can falsify.
+
+  **A broken command split no longer stops the guard silently.** If `awk` is missing or
+  fails, the segment split yields nothing, no segment is judged, and the hook falls through
+  to exit 0 — the guard quietly stops guarding. It still fails open (blocking every Bash
+  call over a broken dependency would be worse), but now prints a one-line warning, the
+  same way the missing-`jq` path already did.
+
+  Test coverage grew from 57 to 126 cases across the two git-guard harnesses. Beyond the
+  new third assertion form (exit 0 **plus** the JSON payload), the harnesses now assert
+  `hookEventName` — without which a decision object is not routable and the ask silently
+  degrades to an allow — cover the `~/.claude/git-guard.conf` path that `/git-guard`
+  actually writes rather than only the environment variable, clear ambient `GIT_GUARD_*`
+  variables so a developer's own settings cannot mask a failure, and fail loudly on a
+  malformed case row instead of skipping it.
+
 ## [0.13.0] - 2026-07-28
 
 ### Fixed

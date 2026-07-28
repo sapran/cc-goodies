@@ -199,6 +199,39 @@ while read -r id expect cwd command; do
   fi
 done < "$cases"
 
+# --- missing dependency must fail OPEN, and must SAY SO ----------------------
+# Not expressible as a cases.tsv row: these need the guard's PATH emptied, not a
+# different command. Both jq and awk are load-bearing — without either, no arm is
+# ever evaluated. Failing open is deliberate (blocking every Bash call over a
+# missing dependency is worse than not guarding), but it must be visible: a
+# guard that stops guarding in silence is the worst of both.
+# bash must be invoked by ABSOLUTE path, or `env PATH=<empty> bash` would fail
+# to find bash itself before the guard ever runs.
+depbin=$(command -v bash)
+depdir=$(mktemp -d) || exit 1
+depjson=$(MSG="rm -rf /" jq -nc '{tool_name:"Bash",tool_input:{command:env.MSG},cwd:"/tmp"}')
+for dep in jq awk; do
+  total=$((total+1))
+  rm -f "$depdir"/*
+  # Link in every tool EXCEPT the one under test.
+  for t in jq awk cat grep sed; do
+    [ "$t" = "$dep" ] && continue
+    p=$(command -v "$t") && ln -sf "$p" "$depdir/$t"
+  done
+  printf '%s' "$depjson" | env PATH="$depdir" "$depbin" "$script" >"$outfile" 2>"$errfile"
+  dgot=$?
+  dout=$(cat "$outfile"); derr=$(cat "$errfile")
+  dok=1
+  [ -z "$dout" ] || dok=0                        # no decision object on a fail-open
+  case "$derr" in *"shell-guard:"*) ;; *) dok=0 ;; esac   # must warn, not go silent
+  if [ "$dgot" = "0" ] && [ "$dok" = 1 ]; then
+    pass=$((pass+1)); printf 'PASS  %-18s expect=0 got=%s (warned)\n' "no-$dep-failopen" "$dgot"
+  else
+    fail=$((fail+1)); printf 'FAIL  %-18s expect=0 got=%s stderr=%s\n' "no-$dep-failopen" "$dgot" "$derr"
+  fi
+done
+rm -rf "$depdir"
+
 echo "-----"
 echo "shell-guard: $pass/$total passed, $fail failed."
 [ "$fail" -eq 0 ]

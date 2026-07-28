@@ -16,7 +16,7 @@ Claude Code plugins. Each lives under `plugins/<name>/` and is installable on it
 |--------|------|-------|
 | `statusline` | statusline + install command | macOS-oriented; needs `/statusline-install` to wire `statusLine` into settings (a plugin can't set that key itself) |
 | `voice-notify` | hooks | macOS `say`; Notification + Stop + UserPromptSubmit + PreToolUse(`Agent`) + PostToolUse(`Agent`) + PostToolUseFailure(`Agent`) + SubagentStop hooks. UserPromptSubmit stamps a `$TMPDIR` turn-start timestamp so Stop can stay quiet on quick turns. Subagent cues **name the agent's purpose** (from `tool_input.description`): PreToolUse claims the burst, waits a collect window for its siblings, then announces one/two/N-and-first; completions are voiced once each — foreground agents at PostToolUse (`tool_response.status == "completed"`; an errored/interrupted one arrives at PostToolUseFailure instead, which has no `tool_response` and so routes to the failure pool), background agents at SubagentStop (still listed in their own `background_tasks`, which is also the authoritative in-flight count, with the marker dirs as the pre-`background_tasks` fallback). The in-flight count is a **block-list** over `background_tasks` types — everything except `shell` and `monitor`, so `workflow`/`teammate`/`cloud session`/`MCP task`/`dream`/`auto-mode scan` (and any future type) hold off the sign-off. Because only Stop + SubagentStop carry that list, they cache the answer in a `$TMPDIR` busy marker that the `Notification` arm reads to keep the *idle* cue silent while work is outstanding (other subtypes still speak; a new prompt clears it; the in-flight TTL ages it out). Individual completion cues are capped by concurrency; a drain roll-up fires only when a waiting cue or the cap left something unsaid. All cues serialise through a create-only `$TMPDIR` speech lock, dropping rather than queueing under contention |
-| `git-guard` | hook + commands | cross-platform; PreToolUse/Bash guard against writes to protected branches |
+| `git-guard` | hook + commands | cross-platform; PreToolUse/Bash guard against writes to protected branches. Deny by default; `GIT_GUARD_LOCAL_WRITE_CHANNEL=ask` opts the **on-branch write** class (commit/merge/pull/rebase/cherry-pick/revert/am + history-moving reset) into the ask channel. Pushes and force-`branch` ops are **never** configurable — a push can't be judged from its command text (destination-less pushes don't even name the target), same criterion that keeps `curl\|sh` on shell-guard's deny channel. Fails closed on any unrecognised value |
 | `shell-guard` | hook + commands | cross-platform; PreToolUse/Bash guard: denies outright (`rm -rf ~`, `dd`/redirect to device, `mkfs`, fork bombs, `curl\|sh`, reboot/shutdown) and asks first via the permission prompt (`: >`, `chmod 777`, `eval`, `sudo`). Covers a typical `settings.json` shell deny list; catches plain-form accidents — deliberate evasion is out of scope (plan-mode backstop) |
 | `rtk-hook` | hook + commands | cross-platform; wraps `rtk hook claude` as a PreToolUse/Bash hook (no-ops if `rtk` absent). `/rtk-hook` is the control panel — pause/resume (`RTK_HOOK_DISABLE` in `~/.claude/rtk-hook.conf`) or remove a hand-wired `settings.json` duplicate; `/rtk-hook-uninstall` deletes the conf and offers to restore the hand-wired entry |
 | `session-finalise` | skill + command | cross-platform; auto-activating end-of-session checklist (durable memory, handoff, tracker updates, commit/stash, cleanup) plus `/session-finalise`, confirming every irreversible step. Writes nothing outside its dir, so `/plugin uninstall` is the full revert |
@@ -146,16 +146,22 @@ shellcheck plugins/<name>/scripts/<script>.sh    # lint
 jq empty plugins/<name>/.claude-plugin/plugin.json && jq empty .claude-plugin/marketplace.json
 ```
 
-git-guard's policy matrix is the reference example: one harness builds temp repos on
-`main`/`develop`/`feature`, pipes crafted tool-call JSON, and checks allow (0) vs block (2)
-across every policy, refspec form, compound command, and false-positive case.
+git-guard's matrix is the reference example: **two** harnesses build temp repos on
+`main`/`develop`/`feature`/`release`, pipe crafted tool-call JSON, and check **three**
+outcomes — allow (0, both streams empty), block (2, reason on stderr, stdout empty), and
+ask (0, `permissionDecision` JSON on stdout, stderr empty) — across every refspec form,
+config-routing path, compound command, channel setting, and false-positive case.
+`tests/run.sh` drives `cases.tsv` plus the cases no TSV row can express (conf-file
+parsing, missing `jq`, a failed ask delivery); `tests/run-routing.sh` covers everything
+needing per-repo `git config` or an absolute `-C` path.
 
 ## Git workflow
 
 - Branches: do work on **`develop`**; `main` is the release branch.
-- This repo eats its own dog food — `git-guard` (policy 2) blocks commits/pushes to
-  `main` from a Claude session. That's intentional. Push `main` from a terminal, or
-  fast-forward `develop` → `main` with explicit user confirmation.
+- This repo eats its own dog food — by default `git-guard` blocks commits/pushes to
+  `main` from a Claude session, and this repo keeps that default (it does **not** set
+  `GIT_GUARD_LOCAL_WRITE_CHANNEL=ask`). That's intentional. Push `main` from a terminal,
+  or fast-forward `develop` → `main` with explicit user confirmation.
 - Conventional commits (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`),
   one logical change per commit. Confirm before pushing.
 

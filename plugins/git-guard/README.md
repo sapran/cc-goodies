@@ -33,19 +33,65 @@ among several.
 
 ## Behavior
 
-One built-in behaviour, one optional toggle:
+One built-in behaviour, two optional toggles:
 
 - **Default** — keep protected branches clean: block a local write (`commit`, `merge`,
-  `pull`, `rebase`, `cherry-pick`, `revert`, history-moving `reset`) while you are **on**
-  a protected branch, and block any **push** whose resolved target is a protected
+  `pull`, `rebase`, `cherry-pick`, `revert`, `am`, history-moving `reset`) while you are
+  **on** a protected branch, and block any **push** whose resolved target is a protected
   branch. Everything on `develop` and feature branches is unrestricted.
 - **`GIT_GUARD_BLOCK_ALL_PUSH=1`** — additionally block **every** push, regardless of
   target (useful for a strictly local-only workflow).
+- **`GIT_GUARD_LOCAL_WRITE_CHANNEL=ask`** — *loosens* the default: instead of blocking an
+  on-branch write outright, ask you first (see [Ask instead of block](#ask-instead-of-block-for-on-branch-writes-only)).
+  Pushes and force-`branch` ops are unaffected and stay blocked.
 
 A local write is judged against the current branch because `git merge`, `git pull`,
 `git rebase` (and a history-moving `reset --hard|--merge|--keep`) each mutate it exactly
 like a commit. The protected-branch list is `GIT_GUARD_MAIN_BRANCHES` (default
 `main master`).
+
+### Ask instead of block, for on-branch writes only
+
+By default every arm **blocks**. If your workflow treats a local commit on `main` as
+acceptable — as long as it is never published — set `GIT_GUARD_LOCAL_WRITE_CHANNEL=ask`.
+The **on-branch write class** then escalates to your own permission prompt instead of
+being denied outright:
+
+```text
+🟡 git-guard: this needs your OK — commit on protected branch 'main'.
+   Protected: main master. Normally you would use a feature branch or 'develop'.
+   The write this matched is LOCAL — it publishes nothing by itself, and every push this guard can resolve to a protected branch is still blocked outright.
+   Approving releases the WHOLE command line shown below — read it before you accept.
+   …
+! git commit -m x
+```
+
+Be clear about what you are agreeing to. **Approving the prompt performs a real write to
+the protected branch** — git makes it recoverable through the reflog, but only if you
+notice. And the prompt approves the **entire Bash command**, not only the part the guard
+matched: a compound command like `git commit -m x && bash -c "git push origin main"`
+contains a push form the guard deliberately does not resolve (see
+[Limitations](#limitations)), so read the command line in the prompt rather than trusting
+the matched rule alone.
+
+Three things this setting deliberately does **not** do:
+
+- **It never touches pushes.** No value of this — or any other — setting can route a push
+  to the ask channel. A push's effect is not visible in the command text you would be
+  approving: the text cannot show whether it fast-forwards or overwrites someone else's
+  commits, and a destination-less `git push` does not even name its target branch. Unlike
+  a local write, a push also leaves your machine, so the reflog cannot undo it.
+- **It never touches `git branch -f|-D|-M|-C`** on a protected branch. That retargets a
+  branch pointer while you are on some other branch — a different action from the
+  "I forgot to switch branches" accident this setting exists to soften.
+- **It fails closed.** Only the exact lowercase string `ask` enables it. `ASK`, `Ask`,
+  `yes`, `1`, or an empty value all mean `deny`, so a typo cannot silently loosen the
+  guard. (This is the opposite of how `GIT_GUARD_DISABLE` and `GIT_GUARD_BLOCK_ALL_PUSH`
+  parse — for those, "set to anything but 0" turns on the *stricter* behaviour.)
+
+If nobody is present to answer the prompt (a headless session), the harness degrades an
+unanswered ask into a blocked command — verified for headless runs only, in
+`openspec/changes/archive/2026-07-26-guard-ask-escalation/design.md` Decision D3.
 
 ## Install
 
@@ -70,6 +116,7 @@ every command, so changes take effect immediately — no restart.
 |-----|---------|---------|
 | `GIT_GUARD_MAIN_BRANCHES` | `main master` | Space-separated protected branches |
 | `GIT_GUARD_BLOCK_ALL_PUSH` | *(unset)* | Set to `1` to block **every** push, not just pushes to a protected branch |
+| `GIT_GUARD_LOCAL_WRITE_CHANNEL` | `deny` | Set to `ask` to be prompted for an on-branch write instead of blocked. Pushes and force-`branch` ops are never affected. Any other value means `deny` |
 | `GIT_GUARD_DISABLE` | *(unset)* | Set to `1` to pause the guard without uninstalling |
 
 Example `~/.claude/git-guard.conf`:
@@ -126,8 +173,9 @@ Target branches are resolved properly, not by substring matching:
 - `git commit` / `merge` / `pull` / `rebase` / `cherry-pick` / `revert` / `am`, and
   a history-moving `git reset --hard|--merge|--keep` → judged against the **current**
   branch (each mutates it like a commit).
-- `git branch -f|-D|-M <protected>` (force-reset / delete / force-rename onto a
-  protected branch) → blocked.
+- `git branch -f|--force|-D|-M|-C <protected>` (force-reset / delete / force-rename /
+  force-copy onto a protected branch) → blocked, on every channel setting. A non-force
+  `git branch -d <protected>` is **not** blocked — git refuses an unmerged `-d` itself.
 - `git -C <path> …` → the branch is resolved in `<path>`, not the cwd.
 - Compound commands are split on `&&`, `||`, `;`, newlines, single pipes, background
   `&`, subshells `( )` and brace groups `{ }`, so `git add . && git push origin main`,
