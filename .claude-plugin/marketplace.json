@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Developer-experience extras for Claude Code: spoken notifications, an enriched statusline, a protected-branch guard, a dangerous-command guard, an RTK token-optimizer hook, an end-of-session finaliser, a per-project tool scoper, and a Codex-MCP web-research helper.",
-    "version": "0.13.0",
+    "version": "0.14.0",
     "repository": "https://github.com/sapran/cc-goodies"
   },
   "plugins": [
@@ -23,7 +23,7 @@
     {
       "name": "git-guard",
       "source": "./plugins/git-guard",
-      "description": "Block accidental commits, merges and pushes to protected branches (main/master) before they run. Configurable protected branches; optional block-all-push mode."
+      "description": "Block accidental commits, merges and pushes to protected branches (main/master) before they run. Configurable protected branches; optional block-all-push mode; opt-in ask-instead-of-block channel for on-branch writes (pushes always block)."
     },
     {
       "name": "shell-guard",

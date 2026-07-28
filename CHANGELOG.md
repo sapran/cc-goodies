@@ -7,6 +7,54 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-28
+
+### Added
+
+- **`git-guard` gains an opt-in ask channel for on-branch writes** (plugin `0.2.4` →
+  `0.3.0`). `GIT_GUARD_LOCAL_WRITE_CHANNEL=ask` routes a `commit`, `merge`, `pull`,
+  `rebase`, `cherry-pick`, `revert`, `am`, or history-moving `reset` made **while on** a
+  protected branch to your own permission prompt, instead of blocking it outright. The
+  default is `deny`, so nothing changes for anyone who does not set it.
+
+  This does not overturn Decision D2 of `guard-ask-escalation`, which rejected an ask
+  channel for `git-guard`. D2 still sets the default. What it conflated was *what the
+  default should be* with *whether the channel is expressible at all* — `git-guard`
+  already lets you configure which branches are protected and how strict pushing is, so
+  the channel was the one dimension hard-coded into the script. A user whose convention is
+  "a local commit on `main` is fine, just never push it" previously had only two options:
+  accept the full deny, or `GIT_GUARD_DISABLE=1`, which also switches off the push arms
+  they wanted to keep.
+
+  **Two arms stay deny-only and are not configurable — permanently, not pending a future
+  setting:**
+
+  - **Every push.** A human at an ask prompt cannot judge a push. The command text does
+    not disclose remote state, so it cannot show whether the push fast-forwards or
+    overwrites someone else's commits, and a destination-less `git push` does not even
+    name its target branch (the guard resolves that from `push.default` and
+    `remote.<remote>.push`). This is the same "can't approve what you can't see" criterion
+    that keeps `curl … | bash` on `shell-guard`'s deny channel. A push also leaves the
+    machine, so unlike a local write the reflog cannot undo it.
+  - **A force `git branch -f|-D|-M|-C` naming a protected branch**, even though the script
+    classifies it alongside local writes internally. It retargets a branch pointer while
+    you are on some other branch — not the "I forgot to switch branches" accident this
+    setting exists to soften — and it was closed as a bypass path once already.
+
+  The setting **fails closed**: only the exact lowercase `ask` enables it, so `ASK`, `Ask`,
+  `yes`, `1`, or an empty value all mean `deny`. This is deliberately the opposite of how
+  `GIT_GUARD_DISABLE` and `GIT_GUARD_BLOCK_ALL_PUSH` parse, where "set to anything but 0"
+  turns on the *stricter* behaviour; here the non-default value is the looser one.
+
+  The ask output reuses `shell-guard`'s existing contract — `permissionDecision: "ask"` on
+  stdout, exit 0, the same `!`-prefixed paste-to-override line — and keeps `shell-guard`'s
+  severity discipline: a deny anywhere in a compound command still outranks an ask
+  recorded earlier, and two ask-class segments emit exactly one decision object.
+
+  Test coverage grew from 57 to 101 cases across the two git-guard harnesses, including a
+  third assertion form (exit 0 **plus** the JSON payload) that the exit-code-only harness
+  could not express before.
+
 ## [0.13.0] - 2026-07-28
 
 ### Fixed
