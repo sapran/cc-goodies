@@ -50,6 +50,7 @@ Set these as environment variables (shell profile, or Claude Code's `env` settin
 | `CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER` | Seconds after which a command that is still running is announced (default `45`). `0` disables the still-running cue only; completion cues keep working. |
 | `CLAUDE_VOICE_NOTIFY_NAG_EVERY` | Seconds between reminders while a permission prompt sits unanswered (default `60`). `0` disables reminders — the prompt is still announced once, as before. |
 | `CLAUDE_VOICE_NOTIFY_NAG_MAX` | How many times a single prompt is re-announced before it gives up (default `5`), so an unattended session doesn't talk all night. |
+| `CLAUDE_VOICE_NOTIFY_WATCH_POLL` | Seconds between the watcher's polls (default `5`, minimum `1`). Mostly a testing knob — the test suite sets it to `1` so a full run takes about a minute; there's little reason to change it in normal use. |
 
 ### Pause / mute
 
@@ -278,6 +279,16 @@ that one cue and the session waits indefinitely in silence. voice-notify now arm
 when the dialog opens and repeats it every `CLAUDE_VOICE_NOTIFY_NAG_EVERY` seconds
 (default 60), naming the tool: *"Still waiting on you — I still need your permission to use
 Bash."*
+
+The reminder is armed by the **same `Notification` that speaks the first request** — the event
+this plugin has used for permission prompts since 0.3.0, and therefore the one it can rely on.
+Claude Code also has a `PermissionRequest` event carrying the exact `tool_use_id`, and that is
+hooked too: when it arrives it *refines* the reminder with the precise id and supersedes the
+anonymous record, so the two never double up. But nothing depends on it firing, and it
+deliberately never runs the watcher — `PermissionRequest` can return an allow/deny decision, and
+a loop that lives for minutes has no business inside a hook that can make one. Only one
+permission prompt can be pending at a time (the session is blocked on it), which is what makes
+the anonymous record safe.
 
 The reminder stops the moment the prompt is resolved — approving it makes the tool run, and
 that completion disarms the reminder; denying it fires the denial event, which does the same;

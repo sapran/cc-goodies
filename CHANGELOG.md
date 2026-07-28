@@ -48,7 +48,11 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   in silence. It is now re-announced every `CLAUDE_VOICE_NOTIFY_NAG_EVERY` seconds (default 60),
   naming the tool, bounded by `CLAUDE_VOICE_NOTIFY_NAG_MAX` repeats (default 5) so an
   unattended session cannot talk all night. It is disarmed by the tool running, by a denial, or
-  by a new prompt.
+  by a new prompt. The reminder is armed by the permission `Notification` — the event this
+  plugin has relied on since 0.3.0 — rather than by `PermissionRequest`, whose emission could
+  not be verified (a headless probe never produces a dialog). `PermissionRequest` is still
+  hooked, but only to refine the record with the exact `tool_use_id`; it never runs the watcher,
+  because it is a hook that can return an allow/deny decision.
 
   New knobs: `CLAUDE_VOICE_NOTIFY_CMD`, `CLAUDE_VOICE_NOTIFY_CMD_QUIET_UNDER`,
   `CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER`, `CLAUDE_VOICE_NOTIFY_NAG_EVERY`,
