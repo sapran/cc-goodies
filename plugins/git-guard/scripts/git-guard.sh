@@ -394,11 +394,25 @@ evaluate_segment() {
 # piece. This keeps a `git` verb hidden behind a pipe, background, subshell or
 # brace group from slipping past. Best-effort: wrappers, command substitution
 # and aliases can still hide a verb — fail open, documented.
+segments=$(printf '%s\n' "$cmd" | awk '{gsub(/[|&;(){}]/,"\n")}1')
+
+# $cmd is non-empty (checked above), so a non-empty command MUST yield at least
+# one segment. Empty output means the split itself failed — a missing or broken
+# awk. Without this check the loop below would simply never run, no segment
+# would ever be judged, and the script would fall through to `exit 0`: the guard
+# silently stops guarding, with no way for the user to notice. Fail OPEN, like
+# the missing-jq path (blocking every Bash call on a broken dependency is worse
+# than not guarding), but say so out loud — that is the whole point.
+if [ -z "$segments" ]; then
+  echo "git-guard: could not split the command (awk missing or failed); guard skipped." >&2
+  exit 0
+fi
+
 while IFS= read -r seg; do
   [ -n "$seg" ] || continue
   evaluate_segment "$seg" || exit 2
 done <<EOF
-$(printf '%s\n' "$cmd" | awk '{gsub(/[|&;(){}]/,"\n")}1')
+$segments
 EOF
 
 # An ask recorded during the scan is emitted ONLY here — once, and only after

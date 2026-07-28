@@ -66,7 +66,13 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   nothing will be published, which a compound command containing a form the guard does not
   resolve (`bash -c "…"`, `sudo -u`) can falsify.
 
-  Test coverage grew from 57 to 125 cases across the two git-guard harnesses. Beyond the
+  **A broken command split no longer stops the guard silently.** If `awk` is missing or
+  fails, the segment split yields nothing, no segment is judged, and the hook falls through
+  to exit 0 — the guard quietly stops guarding. It still fails open (blocking every Bash
+  call over a broken dependency would be worse), but now prints a one-line warning, the
+  same way the missing-`jq` path already did.
+
+  Test coverage grew from 57 to 126 cases across the two git-guard harnesses. Beyond the
   new third assertion form (exit 0 **plus** the JSON payload), the harnesses now assert
   `hookEventName` — without which a decision object is not routable and the ask silently
   degrades to an allow — cover the `~/.claude/git-guard.conf` path that `/git-guard`

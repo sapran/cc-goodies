@@ -99,9 +99,21 @@ check_common_clauses() {
   case "$ctext" in *"$cvariants"*) ;; *) msg_ok=0; msg_detail="$msg_detail no-variants-clause[want:$cvariants]" ;; esac
   rp=$(reason_for "$id")
   if [ -n "$rp" ]; then
+    REASON_SEEN="$REASON_SEEN $id"   # for the coverage check at the bottom
     case "$ctext" in *"$rp"*) ;; *) msg_ok=0; msg_detail="$msg_detail unexpected-reason[want:$rp]" ;; esac
   fi
 }
+
+# Every case id reason_for knows about, read out of the function itself rather
+# than duplicated in a list here — a hand-kept copy would drift the moment
+# someone edits one and not the other. Rename a case in cases.tsv and its
+# reason_for arm stops matching: previously the exact-phrase assertion just
+# vanished with no signal, which is what the coverage check below now catches.
+reason_ids() {
+  sed -n '/^reason_for()/,/^}/p' "$here/run.sh" \
+    | sed -n 's/^    \([A-Za-z0-9|_-]*\)).*/\1/p' | tr '|' ' '
+}
+REASON_SEEN=""
 
 pass=0; fail=0; total=0
 tmpdirs=""
@@ -319,6 +331,28 @@ if [ "$afgot" = "2" ] && [ "$afok" = 1 ]; then
 else
   fail=$((fail+1))
   printf 'FAIL  %-26s expect=2 got=%s stdout=%s\n' "askfail-falls-back-deny" "$afgot" "$afout"
+fi
+
+# --- every reason_for id must actually have been exercised -------------------
+# reason_for returns empty for an unknown id and the phrase assertion is then
+# skipped, so renaming a case in cases.tsv silently drops its exact-reason check
+# while the suite still reports all-passed. One aggregate case, so the totals
+# stay meaningful.
+total=$((total+1))
+unused=""
+for rid in $(reason_ids); do
+  case " $REASON_SEEN " in
+    *" $rid "*) ;;
+    *) unused="$unused $rid" ;;
+  esac
+done
+if [ -z "$unused" ]; then
+  pass=$((pass+1))
+  printf 'PASS  %-26s every reason_for id exercised\n' "reason_for-coverage"
+else
+  fail=$((fail+1))
+  printf 'FAIL  %-26s reason_for knows ids no case exercised (renamed/removed?):%s\n' \
+    "reason_for-coverage" "$unused"
 fi
 
 # Clean every temp repo.
