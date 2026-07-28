@@ -4,11 +4,18 @@
 #
 # Usage (from hooks):  notify.sh <event>
 #   event = "stop" | "notification" | "start" | "dispatch" | "agent-result" | "subagent-stop"
+#         | "tool-result" | "cmd-start" | "stop-failure" | "perm-request" | "perm-denied"
 # The hook's JSON arrives on stdin: "notification" reads .message and .notification_type;
 # "dispatch" reads .tool_input.description; "agent-result" reads .tool_input.description and
 # .tool_response; "subagent-stop" reads .agent_id, .agent_type, .last_assistant_message and
-# .background_tasks; "stop" reads .background_tasks; every event reads .session_id to key its
-# ephemeral state.
+# .background_tasks; "stop" reads .background_tasks; "cmd-start" reads .tool_input and
+# .tool_use_id; "tool-result" reads .tool_name and dispatches to the agent or command path;
+# "stop-failure" reads .error and .error_type; "perm-request" reads .tool_name and .tool_use_id;
+# every event reads .session_id to key its ephemeral state.
+#
+# "tool-result" is matched on every tool, not just Agent/Bash, because approving a permission
+# prompt is signalled only by the tool actually running. It therefore decides and exits as early
+# as possible for tools it has nothing to say about.
 #
 # Only "stop" and "subagent-stop" are given .background_tasks by the harness, so those two are
 # the only events that can tell whether background work is still outstanding. They leave that
@@ -33,6 +40,15 @@
 #   CLAUDE_VOICE_NOTIFY_AGENT_NAME_CAP=N  name individual completions only while at most N
 #                                       subagents are in flight (default 3)
 #   CLAUDE_VOICE_NOTIFY_AGENT_DESC_MAX=N  characters of an agent description to speak (default 60)
+#   CLAUDE_VOICE_NOTIFY_CMD=off         disable the whole shell-command path (still-running cue,
+#                                       completion cues, background completion, the watcher)
+#   CLAUDE_VOICE_NOTIFY_CMD_QUIET_UNDER=N  skip a finished command that ran < N seconds (default 60)
+#   CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER=N  announce a command still running after N s (default 45;
+#                                       0 disables the still-running cue only)
+#   CLAUDE_VOICE_NOTIFY_NAG_EVERY=N     re-announce an unanswered permission prompt every N s
+#                                       (default 60; 0 disables reminders)
+#   CLAUDE_VOICE_NOTIFY_NAG_MAX=N       stop reminding after N repeats (default 5), so an
+#                                       unattended session never talks all night
 #
 # macOS only (uses `say`). No-ops cleanly anywhere `say` is absent.
 
@@ -66,6 +82,23 @@ case "$ttl" in ''|*[!0-9]*) ttl=3600 ;; esac
 ttl=$((10#$ttl))   # force base-10: a leading-zero value (e.g. 0900) must not parse as octal
                    # inside the later $(( ... - ttl )), which would error and, under set -u,
                    # kill the whole stop arm (silencing every turn).
+cmd_quiet="${CLAUDE_VOICE_NOTIFY_CMD_QUIET_UNDER:-60}"
+case "$cmd_quiet" in ''|*[!0-9]*) cmd_quiet=60 ;; esac
+cmd_quiet=$((10#$cmd_quiet))
+cmd_running="${CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER:-45}"
+case "$cmd_running" in ''|*[!0-9]*) cmd_running=45 ;; esac
+cmd_running=$((10#$cmd_running))
+nag_every="${CLAUDE_VOICE_NOTIFY_NAG_EVERY:-60}"
+case "$nag_every" in ''|*[!0-9]*) nag_every=60 ;; esac
+nag_every=$((10#$nag_every))
+nag_max="${CLAUDE_VOICE_NOTIFY_NAG_MAX:-5}"
+case "$nag_max" in ''|*[!0-9]*) nag_max=5 ;; esac
+nag_max=$((10#$nag_max))
+
+# The command path is on by default; "off" leaves every other cue untouched. Reminders are
+# deliberately NOT gated on this — the two features are independently useful.
+cmds="on"
+[ "${CLAUDE_VOICE_NOTIFY_CMD:-on}" = "off" ] && cmds="off"
 
 # Naming is the 0.6.0 behaviour; "off" restores the anonymous cues of earlier versions.
 naming="on"
@@ -97,6 +130,11 @@ read_ts() {
 read_kv() {
   [ -f "$1" ] || { printf ''; return 0; }
   sed -n '2p' "$1" 2>/dev/null
+}
+# read_line <file> <n>: nth line, empty when absent. Reminder records carry four.
+read_line() {
+  [ -f "$1" ] || { printf ''; return 0; }
+  sed -n "${2}p" "$1" 2>/dev/null
 }
 
 # Cues can now originate from several agents finishing at once, so two `say` calls could
@@ -253,6 +291,80 @@ ROLLUP_ONE_CORES="The helper's back.
 That one's back now.
 Helper's done."
 
+# --- shell-command pools ---
+# Still-running: spoken as "<lead> <purpose>." while a command is in flight. A separate pool from
+# the subagent hand-off so "a command is slow" never sounds like "I delegated something".
+CMD_RUNNING_LEADS="Still running
+Still going
+This one's taking a while
+Still working on
+Give it a moment"
+
+CMD_RUNNING_ANON_CORES="A command's still running.
+Something's still going here.
+Still waiting on a command."
+
+# Command completion, spoken as "<purpose> <suffix>" so the purpose leads.
+CMD_DONE_SUFFIXES="— done.
+— finished.
+— that's finished.
+— all done."
+
+CMD_FAIL_SUFFIXES="— that one failed.
+— that didn't work.
+— came back with an error."
+
+CMD_TIMEOUT_SUFFIXES="— that one timed out.
+— timed out waiting on that."
+
+CMD_INTERRUPT_SUFFIXES="— that one was interrupted.
+— that got cut short."
+
+CMD_DONE_ANON_CORES="That command's done.
+The command finished.
+That one's finished."
+
+CMD_FAIL_ANON_CORES="A command failed.
+That command came back with an error."
+
+# Background completion. Phrased so it never implies immediacy: it is noticed at a turn
+# boundary, which can be a while after the command actually exited.
+BG_DONE_LEADS="That background job is done
+The background one finished
+Background job's finished"
+
+BG_DONE_ANON_CORES="A background command has finished.
+The background job is done."
+
+# --- blocked-session pools ---
+# Stalled: the turn died on an API error, so no sign-off will ever come. Distinct from every
+# other pool — this is the one cue that means "nothing more is happening".
+STALL_CORES="I've stalled — something went wrong with the API.
+That turn didn't finish. The API errored out.
+I've stopped — an API error ended the turn."
+
+STALL_RATE_CORES="I've stalled — I'm being rate limited.
+Hit a rate limit, so that turn stopped.
+Rate limited. I've stopped for now."
+
+STALL_BUSY_CORES="I've stalled — the servers are overloaded.
+The API is overloaded, so that turn stopped."
+
+STALL_AUTH_CORES="I've stopped — there's an authentication problem.
+Authentication failed, so I can't carry on."
+
+STALL_BILLING_CORES="I've stopped — there's a billing problem on the account.
+Billing error. I can't carry on until that's sorted."
+
+STALL_LIMIT_CORES="I've stopped — I hit the output limit for that response.
+That response ran past its length limit and stopped."
+
+# Permission reminder: audibly a repeat, never mistakable for the first request.
+NAG_LEADS="Still waiting on you
+I'm still blocked
+Still need you here
+Nothing's moving until you answer"
+
 # --- duration state (ephemeral, $TMPDIR only; OS clears it, /plugin uninstall is enough) ---
 session_id() {
   command -v jq >/dev/null 2>&1 || return 0
@@ -288,6 +400,33 @@ capped_file() { printf '%s/vn-%s.capped' "${TMPDIR:-/tmp}" "$1"; }
 # instead of guessing. First line is the epoch, so the in-flight TTL ages it out and a marker
 # orphaned by a killed process can never mute the idle cue for good.
 busy_file() { printf '%s/vn-%s.busy' "${TMPDIR:-/tmp}" "$1"; }
+
+# --- shell-command state ---
+# A running foreground command, keyed by tool_use_id: epoch on line 1, purpose on line 2. Its
+# presence is what the watcher polls; its absence is what lets the watcher exit.
+cmd_dir()     { printf '%s/vn-%s.cmd.d'     "${TMPDIR:-/tmp}" "$1"; }
+# "The still-running cue for this command has been spoken." Separate create-only marker rather
+# than a third line, so the watcher never rewrites a record another hook may be reading.
+cmdsaid_dir() { printf '%s/vn-%s.cmdsaid.d' "${TMPDIR:-/tmp}" "$1"; }
+# backgroundTaskId -> purpose, recorded at the launch acknowledgement. The harness fires no
+# completion event for a background command, so its finish is detected as the id's *absence*
+# from a later payload's background_tasks.
+bg_dir()      { printf '%s/vn-%s.bg.d'      "${TMPDIR:-/tmp}" "$1"; }
+# An unanswered permission prompt, keyed by tool_use_id: creation epoch (line 1, so the TTL
+# prunes from when the prompt appeared), tool name (2), repeats so far (3), last-spoken epoch (4).
+perm_dir()    { printf '%s/vn-%s.perm.d'    "${TMPDIR:-/tmp}" "$1"; }
+# Create-only election: exactly one watcher polls per session. Its ts is refreshed every poll,
+# so a live watcher is never displaced and a dead one is reclaimed promptly.
+watch_dir()   { printf '%s/vn-%s.watch.d'   "${TMPDIR:-/tmp}" "$1"; }
+
+# Seconds between polls. Configurable mainly so the test suite can drive the watcher
+# quickly; there is little reason to change it in normal use.
+WATCH_POLL="${CLAUDE_VOICE_NOTIFY_WATCH_POLL:-5}"
+case "$WATCH_POLL" in ''|*[!0-9]*) WATCH_POLL=5 ;; esac
+WATCH_POLL=$((10#$WATCH_POLL))
+[ "$WATCH_POLL" -lt 1 ] && WATCH_POLL=1
+WATCH_MAX_LIFE=900  # hard stop, so a watcher can never outlive its usefulness unboundedly
+WATCH_STALE=45      # an election whose heartbeat stopped this long ago is reclaimable
 
 # set_busy <sid> <count>: record outstanding work, or clear the record when nothing is left.
 # A non-numeric count means we never resolved one — leave the record untouched rather than
@@ -426,10 +565,254 @@ sanitise_desc() {
   printf '%s' "$s"
 }
 
-# Read a description out of the tool call being dispatched / reported on.
+# Read a description out of the tool call being dispatched / reported on. Note this is the
+# model-authored *description* only — .tool_input.command is never read for speech, because a
+# command line routinely carries tokens and paths that must not be read aloud.
 tool_desc() {
   command -v jq >/dev/null 2>&1 || return 0
   printf '%s' "$input" | jq -r '.tool_input.description // ""' 2>/dev/null
+}
+
+tool_name() {
+  command -v jq >/dev/null 2>&1 || return 0
+  printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null
+}
+# Sanitised for use as a filename: tool_use_id is harness-generated, but it keys a path.
+tool_use_id() {
+  command -v jq >/dev/null 2>&1 || return 0
+  printf '%s' "$input" | jq -r '.tool_use_id // ""' 2>/dev/null | tr -cd 'A-Za-z0-9._-'
+}
+hook_event() {
+  command -v jq >/dev/null 2>&1 || return 0
+  printf '%s' "$input" | jq -r '.hook_event_name // ""' 2>/dev/null
+}
+
+# speak_cmd_running <purpose>: the still-running cue.
+speak_cmd_running() {
+  local purpose="$1" core lead
+  if [ -n "$purpose" ]; then
+    lead=$(printf '%s\n' "$CMD_RUNNING_LEADS" | pick)
+    core="$lead: $purpose."
+  else
+    core=$(printf '%s\n' "$CMD_RUNNING_ANON_CORES" | pick)
+  fi
+  speak_locked "$(compose "$NEUTRAL_GARNISH" "$core")"
+}
+
+# speak_cmd_done <purpose> <outcome>: outcome is ok | fail | timeout | interrupt.
+speak_cmd_done() {
+  local purpose="$1" outcome="$2" core suffix
+  if [ -n "$purpose" ]; then
+    case "$outcome" in
+      ok)        suffix=$(printf '%s\n' "$CMD_DONE_SUFFIXES" | pick) ;;
+      timeout)   suffix=$(printf '%s\n' "$CMD_TIMEOUT_SUFFIXES" | pick) ;;
+      interrupt) suffix=$(printf '%s\n' "$CMD_INTERRUPT_SUFFIXES" | pick) ;;
+      *)         suffix=$(printf '%s\n' "$CMD_FAIL_SUFFIXES" | pick) ;;
+    esac
+    core="$purpose $suffix"
+  else
+    case "$outcome" in
+      ok) core=$(printf '%s\n' "$CMD_DONE_ANON_CORES" | pick) ;;
+      *)  core=$(printf '%s\n' "$CMD_FAIL_ANON_CORES" | pick) ;;
+    esac
+  fi
+  speak_locked "$(compose "$NEUTRAL_GARNISH" "$core")"
+}
+
+# speak_bg_done <purpose>: a background command noticed as finished at a turn boundary.
+speak_bg_done() {
+  local purpose="$1" core lead
+  if [ -n "$purpose" ]; then
+    lead=$(printf '%s\n' "$BG_DONE_LEADS" | pick)
+    core="$lead: $purpose."
+  else
+    core=$(printf '%s\n' "$BG_DONE_ANON_CORES" | pick)
+  fi
+  speak_locked "$(compose "$NEUTRAL_GARNISH" "$core")"
+}
+
+# drain_bg <sid>: announce every recorded background command whose id has left the payload's
+# task list. Silent — and non-destructive — when the payload carries no list at all, so a
+# version or event without one can never be read as "everything finished".
+drain_bg() {
+  local sid="$1" d have ids f id desc
+  [ "$cmds" = "off" ] && return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  d=$(bg_dir "$sid")
+  [ -d "$d" ] || return 0
+  # Aged out like every other marker dir, so a command whose id never leaves the list cannot
+  # leave a record behind indefinitely.
+  prune_dir "$d" "$(( $(date +%s) - ttl ))"
+  # "Is there a list at all?" is asked separately from "what is in it", so an empty list (every
+  # background command has finished) stays distinguishable from no list (nothing to conclude).
+  have=$(printf '%s' "$input" \
+         | jq -r 'if (.background_tasks | type) == "array" then "yes" else "no" end' 2>/dev/null)
+  [ "$have" = "yes" ] || return 0
+  ids=$(printf '%s' "$input" | jq -r '.background_tasks[].id // empty' 2>/dev/null)
+  for f in "$d"/*; do
+    [ -e "$f" ] || continue
+    id=${f##*/}
+    # Still listed as running -> nothing to say yet.
+    printf '%s\n' "$ids" | grep -qxF "$id" && continue
+    desc=$(read_kv "$f")
+    rm -f "$f" 2>/dev/null
+    speak_bg_done "$desc"
+  done
+}
+
+# nag_due <file> <now>: true when this reminder is due to speak again and still under its cap.
+nag_due() {
+  local f="$1" now="$2" count last
+  [ "$nag_every" -gt 0 ] || return 1
+  count=$(read_line "$f" 3); case "$count" in ''|*[!0-9]*) count=0 ;; esac
+  [ "$((10#$count))" -ge "$nag_max" ] && return 1
+  last=$(read_line "$f" 4); case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  [ "$last" -eq 0 ] && last=$(read_ts "$f")
+  case "$last" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$(( now - last ))" -ge "$nag_every" ]
+}
+
+# watch_pending <sid>: work this watcher can still act on — commands not yet announced, and
+# reminders that have not hit their repeat cap. Everything else has already been said, so the
+# watcher exits instead of spinning until a command it can no longer speak about finishes. A
+# later command or prompt elects a fresh watcher, so exiting early costs nothing.
+watch_pending() {
+  local sid="$1" n=0 f id count blocked=""
+  # Mirrors the watch loop: while a prompt is outstanding, commands are not announceable, so they
+  # are not work this watcher can act on. The reminders themselves keep it alive.
+  [ "$(count_dir "$(perm_dir "$sid")")" -gt 0 ] && blocked=1
+  if [ "$cmds" = "on" ] && [ "$cmd_running" -gt 0 ] && [ -z "$blocked" ]; then
+    for f in "$(cmd_dir "$sid")"/*; do
+      [ -e "$f" ] || continue
+      id=${f##*/}
+      [ -e "$(cmdsaid_dir "$sid")/$id" ] && continue
+      n=$((n+1))
+    done
+  fi
+  if [ "$nag_every" -gt 0 ]; then
+    for f in "$(perm_dir "$sid")"/*; do
+      [ -e "$f" ] || continue
+      count=$(read_line "$f" 3)
+      case "$count" in ''|*[!0-9]*) count=0 ;; esac
+      [ "$((10#$count))" -ge "$nag_max" ] && continue
+      n=$((n+1))
+    done
+  fi
+  printf '%s' "$n"
+}
+
+# watch_loop <sid>: the single elected poller. Speaks the still-running cue for commands that
+# outlived the threshold and re-announces unanswered permission prompts, then exits as soon as
+# neither remains. The harness kills hook processes when the session ends, so this is bounded in
+# practice by the session; WATCH_MAX_LIFE is the belt-and-braces stop.
+watch_loop() {
+  local sid="$1" started now f id ts desc count tool cutoff
+  started=$(date +%s)
+  while :; do
+    now=$(date +%s)
+    [ "$(( now - started ))" -ge "$WATCH_MAX_LIFE" ] && break
+    # Heartbeat: proves to a would-be challenger that this watcher is alive.
+    date +%s > "$(watch_dir "$sid")/ts" 2>/dev/null
+
+    cutoff=$(( now - ttl ))
+    prune_dir "$(cmd_dir "$sid")" "$cutoff"
+    prune_dir "$(cmdsaid_dir "$sid")" "$cutoff"
+    prune_dir "$(perm_dir "$sid")" "$cutoff"
+
+    # PreToolUse fires *before* the permission dialog, so a command marker exists from the moment
+    # a call is proposed — not from when it starts running. While a prompt is outstanding the
+    # session is blocked and nothing is executing, so announcing "still running" would be false.
+    # Verified against 2.1.220: a denied tool produces PreToolUse and nothing else at all.
+    blocked=""
+    [ "$(count_dir "$(perm_dir "$sid")")" -gt 0 ] && blocked=1
+    if [ "$cmds" = "on" ] && [ "$cmd_running" -gt 0 ] && [ -z "$blocked" ]; then
+      for f in "$(cmd_dir "$sid")"/*; do
+        [ -e "$f" ] || continue
+        id=${f##*/}
+        [ -e "$(cmdsaid_dir "$sid")/$id" ] && continue
+        ts=$(read_ts "$f")
+        case "$ts" in ''|*[!0-9]*) continue ;; esac
+        if [ "$(( now - ts ))" -ge "$cmd_running" ]; then
+          desc=$(read_kv "$f")
+          # Mark before speaking: speak_locked can block for seconds, and a second pass must
+          # never re-announce the same command.
+          mark "$(cmdsaid_dir "$sid")" "$id"
+          speak_cmd_running "$desc"
+        fi
+      done
+    fi
+
+    for f in "$(perm_dir "$sid")"/*; do
+      [ -e "$f" ] || continue
+      nag_due "$f" "$now" || continue
+      tool=$(read_line "$f" 2)
+      count=$(read_line "$f" 3); case "$count" in ''|*[!0-9]*) count=0 ;; esac
+      count=$(( 10#$count + 1 ))
+      ts=$(read_ts "$f"); case "$ts" in ''|*[!0-9]*) ts="$now" ;; esac
+      # Rewrite in place: the watcher is the only writer of lines 3 and 4.
+      printf '%s\n%s\n%s\n%s\n' "$ts" "$tool" "$count" "$now" > "$f" 2>/dev/null
+      speak_nag "$tool"
+    done
+
+    # Nothing left this watcher can act on.
+    [ "$(watch_pending "$sid")" -eq 0 ] && break
+    sleep "$WATCH_POLL"
+  done
+  rm -rf "$(watch_dir "$sid")" 2>/dev/null
+}
+
+# speak_nag <tool>: the repeat-request reminder.
+speak_nag() {
+  local tool="$1" lead core
+  lead=$(printf '%s\n' "$NAG_LEADS" | pick)
+  if [ -n "$tool" ]; then
+    core="$lead — I still need your permission to use $tool."
+  else
+    core="$lead — that permission request is still sitting there."
+  fi
+  speak_locked "$(compose "$BRISK_GARNISH" "$core")"
+}
+
+# elect_watcher <sid>: become the session's watcher, or return without doing anything. The claim
+# is create-only so a race can only ever produce one winner; a claim whose heartbeat has stopped
+# is reclaimed so a killed watcher cannot silence the feature for the rest of the session.
+elect_watcher() {
+  local sid="$1" wd ts now
+  wd=$(watch_dir "$sid")
+  if mkdir "$wd" 2>/dev/null; then
+    date +%s > "$wd/ts" 2>/dev/null
+    watch_loop "$sid"
+    return 0
+  fi
+  ts=$(read_ts "$wd/ts")
+  case "$ts" in ''|*[!0-9]*) ts=0 ;; esac
+  now=$(date +%s)
+  if [ "$ts" -gt 0 ] && [ "$(( now - ts ))" -ge "$WATCH_STALE" ]; then
+    rm -rf "$wd" 2>/dev/null
+    if mkdir "$wd" 2>/dev/null; then
+      date +%s > "$wd/ts" 2>/dev/null
+      watch_loop "$sid"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+# disarm_perm <sid> <tool_use_id>: the prompt was answered (the tool ran, or was denied).
+disarm_perm() {
+  # A pending permission prompt blocks the session, so *any* tool completing means it was
+  # answered. That clears the anonymous record as well as the id-keyed one.
+  rm -f "$(perm_dir "$1")/pending" 2>/dev/null
+  [ -n "$2" ] || return 0
+  rm -f "$(perm_dir "$1")/$2" 2>/dev/null
+}
+
+# drop_cmd <sid> <tool_use_id>: forget a proposed command. A call that is refused never reaches
+# PostToolUse — the harness fires PreToolUse and nothing else — so without this its marker would
+# survive to the TTL and then be announced as a command that never ran.
+drop_cmd() {
+  [ -n "$2" ] || return 0
+  rm -f "$(cmd_dir "$1")/$2" "$(cmdsaid_dir "$1")/$2" 2>/dev/null
 }
 
 # Map a Notification message to (subtype, first-person reason). Allow-list only:
@@ -538,6 +921,112 @@ settle() {
   clear_batch "$sid"
 }
 
+# handle_agent_result: PostToolUse / PostToolUseFailure for the Agent tool.
+handle_agent_result() {
+  # The Agent tool returned to the parent. For a foreground agent that is its completion —
+  # the payload carries both the description and the result. For a background agent it is a
+  # launch acknowledgement fired milliseconds after dispatch: record the id-to-purpose join
+  # for its later SubagentStop, and say nothing.
+  [ "${CLAUDE_VOICE_NOTIFY_SUBAGENT:-on}" = "off" ] && exit 0
+  [ "$naming" = "on" ] || exit 0
+  command -v jq >/dev/null 2>&1 || exit 0
+  sid=$(session_id)
+  [ -n "$sid" ] || sid="nosess"
+
+  status=$(printf '%s' "$input" | jq -r '.tool_response.status // ""' 2>/dev/null)
+  is_async=$(printf '%s' "$input" | jq -r '.tool_response.isAsync // false' 2>/dev/null)
+  aid=$(printf '%s' "$input" | jq -r '.tool_response.agentId // ""' 2>/dev/null \
+        | tr -cd 'A-Za-z0-9._-')
+  desc=$(sanitise_desc "$(tool_desc)")
+
+  if [ "$status" = "async_launched" ] || [ "$is_async" = "true" ]; then
+    [ -n "$aid" ] && mark_kv "$(agents_dir "$sid")" "$aid" "$desc"
+    exit 0
+  fi
+
+  ok="no"
+  [ "$status" = "completed" ] && ok="yes"
+  atype=$(printf '%s' "$input" | jq -r '.tool_response.agentType // ""' 2>/dev/null)
+
+  # The foreground agent's own SubagentStop has already recorded its completion, so this
+  # count excludes it. No set_busy here on purpose: a PostToolUse payload carries no task list,
+  # so this count is the marker fallback, and the Stop that follows will record the real one.
+  inflight=$(inflight_markers "$sid")
+  if [ "$inflight" -gt "$name_cap" ]; then
+    date +%s > "$(capped_file "$sid")" 2>/dev/null
+  else
+    speak_completion "$desc" "$atype" "$ok"
+  fi
+  [ -n "$aid" ] && rm -f "$(agents_dir "$sid")/$aid" 2>/dev/null
+  settle "$sid" "$inflight"
+  exit 0
+}
+
+# handle_cmd_result: PostToolUse / PostToolUseFailure for the Bash tool. A backgrounded
+# command's PostToolUse is only a launch acknowledgement — it carries backgroundTaskId and a
+# duration of a few hundred ms — so it is recorded for drain_bg and says nothing. A foreground
+# one is a real completion, gated on how long it actually ran.
+handle_cmd_result() {
+  local sid tuid btid desc evt dur ms ts announced outcome interrupted
+  [ "$cmds" = "off" ] && exit 0
+  command -v jq >/dev/null 2>&1 || exit 0
+  sid=$(session_id); [ -n "$sid" ] || sid="nosess"
+  tuid=$(tool_use_id)
+  desc=$(sanitise_desc "$(tool_desc)")
+
+  btid=$(printf '%s' "$input" | jq -r '.tool_response.backgroundTaskId // ""' 2>/dev/null \
+         | tr -cd 'A-Za-z0-9._-')
+  if [ -n "$btid" ]; then
+    mark_kv "$(bg_dir "$sid")" "$btid" "$desc"
+    [ -n "$tuid" ] && rm -f "$(cmd_dir "$sid")/$tuid" "$(cmdsaid_dir "$sid")/$tuid" 2>/dev/null
+    exit 0
+  fi
+
+  announced=""
+  [ -n "$tuid" ] && [ -e "$(cmdsaid_dir "$sid")/$tuid" ] && announced=1
+
+  # Elapsed: the harness's own duration first, our start record as the fallback.
+  dur=""
+  ms=$(printf '%s' "$input" | jq -r '.duration_ms // ""' 2>/dev/null)
+  case "$ms" in ''|*[!0-9]*) ms="" ;; esac
+  if [ -n "$ms" ]; then
+    dur=$(( 10#$ms / 1000 ))
+  elif [ -n "$tuid" ]; then
+    ts=$(read_ts "$(cmd_dir "$sid")/$tuid")
+    case "$ts" in ''|*[!0-9]*) ts="" ;; esac
+    [ -n "$ts" ] && dur=$(( $(date +%s) - 10#$ts ))
+  fi
+
+  # A failure event carries no tool_input, so fall back to the purpose recorded at dispatch.
+  if [ -z "$desc" ] && [ -n "$tuid" ]; then
+    desc=$(sanitise_desc "$(read_kv "$(cmd_dir "$sid")/$tuid")")
+  fi
+
+  [ -n "$tuid" ] && rm -f "$(cmd_dir "$sid")/$tuid" "$(cmdsaid_dir "$sid")/$tuid" 2>/dev/null
+
+  evt=$(hook_event)
+  outcome="ok"
+  if [ "$evt" = "PostToolUseFailure" ]; then
+    outcome="fail"
+    [ "$(printf '%s' "$input" | jq -r '.is_timeout // false' 2>/dev/null)" = "true" ] \
+      && outcome="timeout"
+    [ "$(printf '%s' "$input" | jq -r '.is_interrupt // false' 2>/dev/null)" = "true" ] \
+      && outcome="interrupt"
+  else
+    interrupted=$(printf '%s' "$input" | jq -r '.tool_response.interrupted // false' 2>/dev/null)
+    [ "$interrupted" = "true" ] && outcome="interrupt"
+  fi
+
+  # Having been told a command was running, the user always gets the matching all-clear —
+  # whatever the gate would otherwise have said.
+  if [ -z "$announced" ] && [ "$cmd_quiet" -gt 0 ]; then
+    [ -n "$dur" ] || exit 0
+    [ "$dur" -lt "$cmd_quiet" ] && exit 0
+  fi
+  speak_cmd_done "$desc" "$outcome"
+  exit 0
+}
+
 case "$event" in
   start)
     # Stamp the turn start so Stop can measure how long it ran.
@@ -548,6 +1037,8 @@ case "$event" in
     # protect them from. Always clear it, even with the subagent path muted, so toggling the mute
     # can't strand a marker.
     rm -f "$(busy_file "$sid")" 2>/dev/null
+    # The user is demonstrably back at the keyboard, so nothing is owed a reminder.
+    rm -rf "$(perm_dir "$sid")" 2>/dev/null
     # Reset the roll-up bookkeeping only when nothing is outstanding: a turn submitted while
     # background agents still run must not lose the all-clear it was promised.
     [ "$(inflight_markers "$sid")" -eq 0 ] && clear_batch "$sid"
@@ -568,6 +1059,11 @@ case "$event" in
         esac
       fi
     fi
+
+    # A background command that has left the harness's task list has finished. Announce that
+    # before any waiting/sign-off cue, so the order matches what actually happened.
+    bsid="$sid"; [ -n "$bsid" ] || bsid="nosess"
+    drain_bg "$bsid"
 
     # Subagents still running? The main turn ended but background agents keep working, so a
     # sign-off would be a false "finished". Announce the waiting state instead — and, since a
@@ -634,6 +1130,31 @@ case "$event" in
       *)                      garnish="$NEUTRAL_GARNISH" ;;
     esac
     speak_locked "$(compose "$garnish" "$reason")"
+
+    # A permission prompt blocks the session until it is answered, so it is the one cue worth
+    # repeating. Arm the reminder from *this* event rather than from PermissionRequest alone:
+    # this notification is known to fire (it is what speaks the first request), while
+    # PermissionRequest could not be shown to fire at all — a headless probe never produces a
+    # dialog. PermissionRequest still refines the record with the exact tool_use_id when it does
+    # arrive. Speaking happens first above, so the reminder never delays the first announcement.
+    if [ "$sub" = "permission" ] && [ "$nag_every" -gt 0 ]; then
+      psid=$(session_id)
+      [ -n "$psid" ] || psid="nosess"
+      # Only one permission prompt can be pending at a time, so a record already armed by
+      # PermissionRequest (keyed by its tool_use_id) is this same prompt — don't double-arm.
+      if [ "$(count_dir "$(perm_dir "$psid")")" -eq 0 ] && mkdir -p "$(perm_dir "$psid")" 2>/dev/null; then
+        ptool=""
+        case "$msg" in *"to use "*) ptool="${msg##*to use }" ;; esac
+        ptool=$(sanitise_desc "$ptool")
+        nowts=$(date +%s)
+        printf '%s\n%s\n0\n%s\n' "$nowts" "$ptool" "$nowts" \
+          > "$(perm_dir "$psid")/pending" 2>/dev/null
+      fi
+      # The watcher runs here, in a plain notification hook, rather than inside
+      # PermissionRequest — that event can return an allow/deny decision, and a long-running
+      # loop has no business inside it.
+      elect_watcher "$psid"
+    fi
     ;;
 
   dispatch)
@@ -716,43 +1237,7 @@ case "$event" in
     ;;
 
   agent-result)
-    # The Agent tool returned to the parent. For a foreground agent that is its completion —
-    # the payload carries both the description and the result. For a background agent it is a
-    # launch acknowledgement fired milliseconds after dispatch: record the id-to-purpose join
-    # for its later SubagentStop, and say nothing.
-    [ "${CLAUDE_VOICE_NOTIFY_SUBAGENT:-on}" = "off" ] && exit 0
-    [ "$naming" = "on" ] || exit 0
-    command -v jq >/dev/null 2>&1 || exit 0
-    sid=$(session_id)
-    [ -n "$sid" ] || sid="nosess"
-
-    status=$(printf '%s' "$input" | jq -r '.tool_response.status // ""' 2>/dev/null)
-    is_async=$(printf '%s' "$input" | jq -r '.tool_response.isAsync // false' 2>/dev/null)
-    aid=$(printf '%s' "$input" | jq -r '.tool_response.agentId // ""' 2>/dev/null \
-          | tr -cd 'A-Za-z0-9._-')
-    desc=$(sanitise_desc "$(tool_desc)")
-
-    if [ "$status" = "async_launched" ] || [ "$is_async" = "true" ]; then
-      [ -n "$aid" ] && mark_kv "$(agents_dir "$sid")" "$aid" "$desc"
-      exit 0
-    fi
-
-    ok="no"
-    [ "$status" = "completed" ] && ok="yes"
-    atype=$(printf '%s' "$input" | jq -r '.tool_response.agentType // ""' 2>/dev/null)
-
-    # The foreground agent's own SubagentStop has already recorded its completion, so this
-    # count excludes it. No set_busy here on purpose: a PostToolUse payload carries no task list,
-    # so this count is the marker fallback, and the Stop that follows will record the real one.
-    inflight=$(inflight_markers "$sid")
-    if [ "$inflight" -gt "$name_cap" ]; then
-      date +%s > "$(capped_file "$sid")" 2>/dev/null
-    else
-      speak_completion "$desc" "$atype" "$ok"
-    fi
-    [ -n "$aid" ] && rm -f "$(agents_dir "$sid")/$aid" 2>/dev/null
-    settle "$sid" "$inflight"
-    exit 0
+    handle_agent_result
     ;;
 
   subagent-stop)
@@ -768,6 +1253,8 @@ case "$event" in
     # unique name when the id is unavailable (jq missing) so the completion still registers.
     [ -n "$aid" ] || aid="a$(date +%s).$$.${RANDOM:-0}"
     mark "$(done_dir "$sid")" "$aid"
+
+    drain_bg "$sid"
 
     # Refresh the idle-cue marker first, before any naming-dependent exit below: this is the
     # event that turns "still working" back into "actually idle", and it has to do so even with
@@ -810,6 +1297,100 @@ case "$event" in
       speak_completion "$purpose" "$(agent_type)" "$ok"
     fi
     settle "$sid" "$inflight"
+    exit 0
+    ;;
+
+  cmd-start)
+    # A shell command is starting. Record it so the watcher can announce it if it turns out to
+    # be slow, then try to become that watcher.
+    [ "$cmds" = "off" ] && exit 0
+    command -v jq >/dev/null 2>&1 || exit 0
+    sid=$(session_id)
+    [ -n "$sid" ] || sid="nosess"
+    # A backgrounded command returns immediately and reports through drain_bg instead, so it is
+    # never a "still running" candidate.
+    bgflag=$(printf '%s' "$input" | jq -r '.tool_input.run_in_background // false' 2>/dev/null)
+    [ "$bgflag" = "true" ] && exit 0
+    tuid=$(tool_use_id)
+    [ -n "$tuid" ] || exit 0
+    mark_kv "$(cmd_dir "$sid")" "$tuid" "$(sanitise_desc "$(tool_desc)")"
+    [ "$cmd_running" -gt 0 ] && elect_watcher "$sid"
+    exit 0
+    ;;
+
+  tool-result)
+    # PostToolUse / PostToolUseFailure, matched on every tool because approving a permission
+    # prompt is signalled only by the tool actually running. Decide in one jq call and leave
+    # immediately for the tools this plugin has nothing to say about.
+    command -v jq >/dev/null 2>&1 || exit 0
+    IFS=$'\t' read -r sid tname tuid <<EOF
+$(printf '%s' "$input" | jq -r '[(.session_id//""),(.tool_name//""),(.tool_use_id//"")]|@tsv' 2>/dev/null)
+EOF
+    sid=$(printf '%s' "$sid" | tr -cd 'A-Za-z0-9._-')
+    tuid=$(printf '%s' "$tuid" | tr -cd 'A-Za-z0-9._-')
+    [ -n "$sid" ] || sid="nosess"
+    # The tool ran, so any permission prompt for it has been answered.
+    [ -d "$(perm_dir "$sid")" ] && disarm_perm "$sid" "$tuid"
+    case "$tname" in
+      Agent) handle_agent_result ;;
+      Bash)  handle_cmd_result ;;
+    esac
+    exit 0
+    ;;
+
+  stop-failure)
+    # The turn died on an API error, so no Stop will ever fire and nothing else would speak.
+    # Worth saying however short the turn was: the duration gate is deliberately bypassed.
+    sid=$(session_id)
+    if [ -n "$sid" ]; then
+      rm -f "$(state_file "$sid")" 2>/dev/null
+      [ "$(inflight_markers "$sid")" -eq 0 ] && clear_batch "$sid"
+    fi
+    etype=""
+    if command -v jq >/dev/null 2>&1; then
+      etype=$(printf '%s' "$input" | jq -r '.error_type // ""' 2>/dev/null)
+    fi
+    case "$etype" in
+      rate_limit)            core=$(printf '%s\n' "$STALL_RATE_CORES" | pick) ;;
+      overloaded|server_error) core=$(printf '%s\n' "$STALL_BUSY_CORES" | pick) ;;
+      authentication_failed|oauth_org_not_allowed)
+                             core=$(printf '%s\n' "$STALL_AUTH_CORES" | pick) ;;
+      billing_error)         core=$(printf '%s\n' "$STALL_BILLING_CORES" | pick) ;;
+      max_output_tokens)     core=$(printf '%s\n' "$STALL_LIMIT_CORES" | pick) ;;
+      *)                     core=$(printf '%s\n' "$STALL_CORES" | pick) ;;
+    esac
+    speak_locked "$(compose "$BRISK_GARNISH" "$core")"
+    ;;
+
+  perm-request)
+    # A permission dialog is on screen. The Notification arm speaks the first announcement; this
+    # arms the reminder that follows if it goes unanswered. Deliberately independent of
+    # CLAUDE_VOICE_NOTIFY_CMD: a blocked session is worth reporting even with command cues off.
+    [ "$nag_every" -gt 0 ] || exit 0
+    command -v jq >/dev/null 2>&1 || exit 0
+    sid=$(session_id)
+    [ -n "$sid" ] || sid="nosess"
+    tuid=$(tool_use_id)
+    [ -n "$tuid" ] || exit 0
+    mkdir -p "$(perm_dir "$sid")" 2>/dev/null || exit 0
+    nowts=$(date +%s)
+    printf '%s\n%s\n0\n%s\n' "$nowts" "$(sanitise_desc "$(tool_name)")" "$nowts" \
+      > "$(perm_dir "$sid")/$tuid" 2>/dev/null
+    # This record supersedes the anonymous one the Notification arm may have armed for the same
+    # prompt, so the user is reminded once, not twice.
+    rm -f "$(perm_dir "$sid")/pending" 2>/dev/null
+    # Deliberately does NOT elect the watcher: this event can return an allow/deny decision, so
+    # it must return immediately. The accompanying Notification takes up the watch.
+    exit 0
+    ;;
+
+  perm-denied)
+    command -v jq >/dev/null 2>&1 || exit 0
+    sid=$(session_id)
+    [ -n "$sid" ] || sid="nosess"
+    ptuid=$(tool_use_id)
+    disarm_perm "$sid" "$ptuid"
+    drop_cmd "$sid" "$ptuid"
     exit 0
     ;;
 

@@ -93,6 +93,12 @@ has_any() {
 # The collect window makes the first dispatch of a burst wait for its siblings; tests drive
 # state directly, so waiting only slows them down.
 export CLAUDE_VOICE_NOTIFY_SUBAGENT_COLLECT=0
+# Permission reminders ride the permission Notification, so leaving them on would make every
+# permission test sit through a watcher. Off by default here; the reminder tests opt in.
+export CLAUDE_VOICE_NOTIFY_NAG_EVERY=0
+# The watcher polls every 5s in production; at that rate the watcher tests dominate the
+# suite runtime. One second keeps them honest and makes a full run quick.
+export CLAUDE_VOICE_NOTIFY_WATCH_POLL=1
 J_PERM='{"message":"Claude needs your permission to use Bash","session_id":"sess"}'
 J_IDLE='{"message":"Claude is waiting for your input","session_id":"sess"}'
 J_WEIRD='{"message":"Claude Code is reticulating splines","session_id":"sess"}'
@@ -674,6 +680,402 @@ mkdir -p "$work/vn-speak.lock.d"; printf '%s' "$(( $(now) - 600 ))" > "$work/vn-
 run notification "$J_PERM"
 [ -n "$spoke" ] && ok "an abandoned lock is reclaimed" || no "abandoned lock wedged the cue" "(nothing)"
 rm -rf "$work/vn-speak.lock.d"
+
+# ======================================================================================
+# 0.8.0: shell-command cues and blocked-session cues
+# ======================================================================================
+export CLAUDE_VOICE_NOTIFY_GARNISH_PCT=0    # core-only -> deterministic assertions
+export CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER=45
+export CLAUDE_VOICE_NOTIFY_CMD_QUIET_UNDER=60
+export CLAUDE_VOICE_NOTIFY_NAG_EVERY=60
+export CLAUDE_VOICE_NOTIFY_NAG_MAX=5
+unset CLAUDE_VOICE_NOTIFY_CMD 2>/dev/null || true
+
+cmd_reset()   { rm -rf "$work/vn-sess.cmd.d" "$work/vn-sess.cmdsaid.d" "$work/vn-sess.bg.d" \
+                       "$work/vn-sess.perm.d" "$work/vn-sess.watch.d"; }
+cmd_add()     { mkdir -p "$work/vn-sess.cmd.d"; printf '%s\n%s\n' "${2:-$(now)}" "$3" > "$work/vn-sess.cmd.d/$1"; }
+cmd_said()    { mkdir -p "$work/vn-sess.cmdsaid.d"; printf '%s' "$(now)" > "$work/vn-sess.cmdsaid.d/$1"; }
+bg_add()      { mkdir -p "$work/vn-sess.bg.d"; printf '%s\n%s\n' "$(now)" "$2" > "$work/vn-sess.bg.d/$1"; }
+bg_has()      { [ -f "$work/vn-sess.bg.d/$1" ]; }
+perm_add()    { mkdir -p "$work/vn-sess.perm.d"; printf '%s\n%s\n%s\n%s\n' "${2:-$(now)}" "$3" "${4:-0}" "${5:-0}" > "$work/vn-sess.perm.d/$1"; }
+perm_has()    { [ -f "$work/vn-sess.perm.d/$1" ]; }
+cmd_has()     { [ -f "$work/vn-sess.cmd.d/$1" ]; }
+
+# Payload builders. duration_ms is what the harness actually sends (verified against 2.1.220).
+j_post()  { printf '{"session_id":"sess","hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"%s","tool_input":{"command":"make test","description":"%s"},"tool_response":{"stdout":"","stderr":"","interrupted":false},"duration_ms":%s}' "$1" "$2" "$3"; }
+j_postbg() { printf '{"session_id":"sess","hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"%s","tool_input":{"command":"npm run dev","description":"%s","run_in_background":true},"tool_response":{"stdout":"","stderr":"","interrupted":false,"backgroundTaskId":"%s"},"duration_ms":420}' "$1" "$2" "$3"; }
+j_fail()  { printf '{"session_id":"sess","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_use_id":"%s","tool_input":{"command":"make test","description":"%s"},"error":"boom","is_timeout":%s,"is_interrupt":%s}' "$1" "$2" "$3" "$4"; }
+j_pre()   { printf '{"session_id":"sess","hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"%s","tool_input":{"command":"make test","description":"%s"%s}}' "$1" "$2" "$3"; }
+j_stopf() { printf '{"session_id":"sess","hook_event_name":"StopFailure","error":"upstream said no","error_type":"%s"}' "$1"; }
+j_permreq() { printf '{"session_id":"sess","hook_event_name":"PermissionRequest","tool_name":"%s","tool_use_id":"%s"}' "$1" "$2"; }
+# background_tasks carrying an explicit list of shell ids (or an empty list).
+j_stop_bt() { printf '{"session_id":"sess","hook_event_name":"Stop","background_tasks":[%s]}' "$1"; }
+bt_shell()  { printf '{"id":"%s","type":"shell","status":"running","description":"a job","command":"sleep 5"}' "$1"; }
+
+# --- 8.1 duration gate -----------------------------------------------------------------
+cmd_reset; all_reset
+run tool-result "$(j_post t1 'Run the test suite' 90000)"
+has "Run the test suite" "a long command speaks on completion"
+
+cmd_reset
+run tool-result "$(j_post t2 'Print the branch' 700)"
+[ -z "$spoke" ] && ok "a quick command stays silent" || no "quick command spoke" "$spoke"
+
+cmd_reset
+CLAUDE_VOICE_NOTIFY_CMD_QUIET_UNDER=0 run tool-result "$(j_post t3 'Print the branch' 700)"
+has "Print the branch" "threshold 0 speaks for every command"
+
+# No duration_ms in the payload -> fall back to the start record we wrote at dispatch.
+cmd_reset
+cmd_add t4 "$(( $(now) - 300 ))" 'Build the image'
+run tool-result '{"session_id":"sess","hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"t4","tool_input":{"command":"docker build .","description":"Build the image"},"tool_response":{"stdout":""}}'
+has "Build the image" "missing duration falls back to the start record"
+
+# --- 8.2 outcomes ----------------------------------------------------------------------
+cmd_reset
+cmd_add t5 "$(( $(now) - 300 ))" 'Run the test suite'
+run tool-result "$(j_fail t5 'Run the test suite' false false)"
+has_any "a failure is announced as a failure" "failed" "didn't work" "error"
+
+cmd_reset
+cmd_add t6 "$(( $(now) - 300 ))" 'Run the test suite'
+run tool-result "$(j_fail t6 'Run the test suite' true false)"
+has "timed out" "a timeout has its own phrasing"
+
+cmd_reset
+cmd_add t7 "$(( $(now) - 300 ))" 'Run the test suite'
+run tool-result "$(j_fail t7 'Run the test suite' false true)"
+has_any "an interruption has its own phrasing" "interrupted" "cut short"
+
+cmd_reset
+run tool-result "$(j_post t8 'Run the test suite' 90000)"
+hasnt "failed" "success is not phrased as a failure"
+
+# --- 8.3 / 8.4 still-running + the announced-always-reports rule ------------------------
+# A command announced as running reports its completion even below the quiet threshold.
+cmd_reset
+cmd_add t9 "$(now)" 'Run the test suite'
+cmd_said t9
+run tool-result "$(j_post t9 'Run the test suite' 700)"
+has "Run the test suite" "an announced command reports completion below the threshold"
+
+cmd_reset
+cmd_add t10 "$(now)" 'Run the test suite'
+cmd_said t10
+run tool-result "$(j_fail t10 'Run the test suite' false false)"
+has_any "an announced command that fails still reports" "failed" "didn't work" "error"
+
+# The still-running cue itself: drive the watcher with a tiny threshold and an already-old marker.
+cmd_reset
+cmd_add t11 "$(( $(now) - 100 ))" 'Run the test suite'
+CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER=1 run cmd-start "$(j_pre t12 'Another command' '')"
+has "Run the test suite" "a command past the interval is announced as still running"
+[ -f "$work/vn-sess.cmdsaid.d/t11" ] && ok "the still-running cue is marked as spoken" || no "no announced marker" "(missing)"
+
+# Announced once only: a second watcher pass says nothing more about the same command.
+cmd_reset
+cmd_add t13 "$(( $(now) - 100 ))" 'Run the test suite'
+cmd_said t13
+CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER=1 run cmd-start "$(j_pre t14 'Another command' '')"
+hasnt "Run the test suite" "an already-announced command is not announced again"
+
+# Interval 0 disables the running cue but leaves completion intact.
+cmd_reset
+cmd_add t15 "$(( $(now) - 100 ))" 'Run the test suite'
+CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER=0 run cmd-start "$(j_pre t16 'Another command' '')"
+[ -z "$spoke" ] && ok "interval 0 disables the still-running cue" || no "spoke with interval 0" "$spoke"
+cmd_reset
+CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER=0 run tool-result "$(j_post t17 'Run the test suite' 90000)"
+has "Run the test suite" "interval 0 leaves completion cues working"
+
+# --- 8.5 watcher election ---------------------------------------------------------------
+cmd_reset
+mkdir -p "$work/vn-sess.watch.d"; printf '%s' "$(now)" > "$work/vn-sess.watch.d/ts"
+cmd_add t18 "$(( $(now) - 100 ))" 'Run the test suite'
+CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER=1 run cmd-start "$(j_pre t19 'Another command' '')"
+[ -z "$spoke" ] && ok "a live election is not displaced (one watcher per session)" || no "second watcher ran" "$spoke"
+
+# An election whose heartbeat stopped is reclaimed.
+cmd_reset
+mkdir -p "$work/vn-sess.watch.d"; printf '%s' "$(( $(now) - 600 ))" > "$work/vn-sess.watch.d/ts"
+cmd_add t20 "$(( $(now) - 100 ))" 'Run the test suite'
+CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER=1 run cmd-start "$(j_pre t21 'Another command' '')"
+has "Run the test suite" "an abandoned election is reclaimed"
+
+# The watcher exits (rather than hanging) once nothing is outstanding: with no markers at all
+# the run returns promptly and releases the claim.
+cmd_reset
+CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER=1 run cmd-start "$(j_pre t22 'Another command' '')"
+[ -d "$work/vn-sess.watch.d" ] && no "watcher left its election behind" "(claim still present)" \
+  || ok "the watcher releases its election on exit"
+
+# --- 8.6 background completion -----------------------------------------------------------
+cmd_reset
+run tool-result "$(j_postbg t23 'Start the dev server' btabc)"
+[ -z "$spoke" ] && ok "a launch acknowledgement is silent" || no "launch ack spoke" "$spoke"
+bg_has btabc && ok "a launch acknowledgement records the task id" || no "no bg record" "(missing)"
+
+# Still listed -> nothing to say.
+run stop "$(j_stop_bt "$(bt_shell btabc)")"
+hasnt "Start the dev server" "a still-running background command is not announced"
+bg_has btabc && ok "a still-running background record is kept" || no "record dropped early" "(missing)"
+
+# Gone from the list -> announced once, then forgotten.
+run stop "$(j_stop_bt '')"
+has "Start the dev server" "a finished background command is announced by name"
+bg_has btabc && no "background record survived its announcement" "(still present)" \
+  || ok "an announced background command is forgotten"
+run stop "$(j_stop_bt '')"
+hasnt "Start the dev server" "a background command is announced only once"
+
+# No task list at all -> conclude nothing, keep the record.
+cmd_reset
+bg_add btxyz 'Start the dev server'
+run stop '{"session_id":"sess","hook_event_name":"Stop"}'
+hasnt "Start the dev server" "no task list means no background completion is inferred"
+bg_has btxyz && ok "no task list leaves background records intact" || no "record dropped" "(missing)"
+
+# --- 8.7 the command string is never spoken -----------------------------------------------
+cmd_reset
+run tool-result '{"session_id":"sess","hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"t24","tool_input":{"command":"curl -H token-sk-supersecret-value https://example.invalid","description":"Call the API"},"tool_response":{"stdout":""},"duration_ms":90000}'
+hasnt "supersecret" "a secret on the command line is never voiced"
+hasnt "curl" "the command string itself is never voiced"
+has "Call the API" "the description is voiced instead"
+
+# No description -> anonymous, still never the command.
+cmd_reset
+run tool-result '{"session_id":"sess","hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"t25","tool_input":{"command":"make release"},"tool_response":{"stdout":""},"duration_ms":90000}'
+hasnt "make release" "a command with no description still never voices the command"
+[ -n "$spoke" ] && ok "a command with no description falls back to an anonymous cue" || no "silent" "(nothing)"
+
+# --- 8.8 in-flight accounting is unchanged -------------------------------------------------
+cmd_reset; all_reset
+# Stamp a long turn so the assertion targets the six-phrase long pool rather than trying to
+# enumerate the ten-phrase standard one — the same trick the 0.7.0 in-flight tests use.
+stamp "$(( $(now) - 300 ))"
+run stop "$(j_stop_bt "$(bt_shell btq)")"
+long_signoff "a running background command still lets the sign-off speak"
+busy_is_set && no "a shell task wrote a busy marker" "(marker present)" || ok "a shell task writes no busy marker"
+
+# --- 8.9 StopFailure ------------------------------------------------------------------------
+cmd_reset; all_reset
+run stop-failure "$(j_stopf rate_limit)"
+has_any "a rate-limited turn is named" "rate limit" "Rate limited"
+run stop-failure "$(j_stopf overloaded)"
+has "overloaded" "an overloaded turn is named"
+run stop-failure "$(j_stopf authentication_failed)"
+has_any "an authentication failure is named" "authentication" "Authentication"
+run stop-failure "$(j_stopf billing_error)"
+has "illing" "a billing failure is named"
+run stop-failure "$(j_stopf max_output_tokens)"
+has_any "an output-limit failure is named" "output limit" "length limit"
+run stop-failure "$(j_stopf something_new)"
+has_any "an unknown cause falls back to a generic stalled cue" "stalled" "didn't finish" "stopped"
+hasnt "All done" "a stalled turn never speaks a sign-off"
+
+# The duration gate is bypassed: a turn that died 1 second in still speaks.
+all_reset
+stamp "$(now)"
+export CLAUDE_VOICE_NOTIFY_QUIET_UNDER=3600
+run stop-failure "$(j_stopf rate_limit)"
+[ -n "$spoke" ] && ok "the stalled cue ignores the duration gate" || no "gate silenced the stalled cue" "(nothing)"
+[ -f "$work/vn-sess.start" ] && no "turn-start state survived a stalled turn" "(still present)" \
+  || ok "a stalled turn clears its turn-start state"
+export CLAUDE_VOICE_NOTIFY_QUIET_UNDER=20
+
+# Without jq the cause can't be read, but the generic cue must still speak.
+PATH_USE="$bin_nojq"
+run stop-failure "$(j_stopf rate_limit)"
+[ -n "$spoke" ] && ok "no jq -> a generic stalled cue still speaks" || no "silent without jq" "(nothing)"
+PATH_USE="$bin_mac"
+
+# --- 8.10 permission reminders ---------------------------------------------------------------
+# Arm through the real event and let the elected watcher speak. NAG_MAX=1 makes the reminder hit
+# its cap after one repeat, so the watcher runs out of actionable work and exits promptly.
+cmd_reset
+CLAUDE_VOICE_NOTIFY_NAG_EVERY=1 CLAUDE_VOICE_NOTIFY_NAG_MAX=1 CLAUDE_VOICE_NOTIFY_CMD=off \
+  run notification "$J_PERM"
+has_any "an unanswered prompt is re-announced" "still need" "Still waiting" "still blocked" "Nothing's moving"
+has "Bash" "the reminder names the tool"
+ok "reminders work with the command path muted"
+
+# A reminder already at its cap never speaks again. The second prompt (Write) is what gives the
+# watcher something to do and then lets it exit.
+cmd_reset
+perm_add p3 "$(( $(now) - 600 ))" 'Bash' 5 "$(( $(now) - 600 ))"
+CLAUDE_VOICE_NOTIFY_NAG_EVERY=1 CLAUDE_VOICE_NOTIFY_NAG_MAX=1 run perm-request "$(j_permreq Write p4)"
+hasnt "Bash" "a reminder at its cap stops repeating"
+
+# nag_every=0 disables reminders entirely (nothing is even armed).
+cmd_reset
+CLAUDE_VOICE_NOTIFY_NAG_EVERY=0 run perm-request "$(j_permreq Bash p7)"
+perm_has p7 && no "a reminder was armed with nag_every=0" "(armed)" || ok "nag interval 0 arms no reminder"
+
+# Disarm: the tool running (i.e. the prompt was approved), a denial, and a new prompt. The
+# approval case is also what makes a prompt answered quickly never get re-announced.
+cmd_reset
+perm_add p8 "$(now)" 'Bash' 0 "$(now)"
+run tool-result '{"session_id":"sess","hook_event_name":"PostToolUse","tool_name":"Write","tool_use_id":"p8","tool_input":{},"tool_response":{}}'
+perm_has p8 && no "approval did not disarm the reminder" "(still armed)" \
+  || ok "approval disarms the reminder, so a prompt answered quickly is never re-announced"
+
+cmd_reset
+perm_add p9 "$(now)" 'Bash' 0 "$(now)"
+run perm-denied '{"session_id":"sess","hook_event_name":"PermissionDenied","tool_name":"Bash","tool_use_id":"p9"}'
+perm_has p9 && no "denial did not disarm the reminder" "(still armed)" || ok "denial disarms the reminder"
+
+cmd_reset
+perm_add p10 "$(now)" 'Bash' 0 "$(now)"
+perm_add p11 "$(now)" 'Write' 0 "$(now)"
+run start "$J_SESS"
+{ perm_has p10 || perm_has p11; } && no "a new prompt left reminders armed" "(still armed)" \
+  || ok "a new prompt disarms every reminder"
+
+# Reminders are per prompt: disarming one leaves the other.
+cmd_reset
+perm_add p12 "$(now)" 'Bash' 0 "$(now)"
+perm_add p13 "$(now)" 'Write' 0 "$(now)"
+run perm-denied '{"session_id":"sess","hook_event_name":"PermissionDenied","tool_name":"Bash","tool_use_id":"p12"}'
+{ ! perm_has p12 && perm_has p13; } && ok "reminders are independent per prompt" \
+  || no "disarming one reminder affected the other" "(wrong set)"
+
+# A stale reminder record is pruned rather than speaking forever.
+cmd_reset
+perm_add p15 "$(( $(now) - 99999 ))" 'Bash' 0 "$(( $(now) - 99999 ))"
+CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL=60 CLAUDE_VOICE_NOTIFY_NAG_EVERY=1 CLAUDE_VOICE_NOTIFY_NAG_MAX=1 \
+  run cmd-start "$(j_pre t35 'Another command' '')"
+perm_has p15 && no "a stale reminder record survived" "(still present)" || ok "a stale reminder record is pruned"
+
+# --- 8.11 mutes and degradation ---------------------------------------------------------------
+cmd_reset
+CLAUDE_VOICE_NOTIFY=off run tool-result "$(j_post t26 'Run the test suite' 90000)"
+[ -z "$spoke" ] && ok "the global mute silences command cues" || no "spoke while globally muted" "$spoke"
+
+cmd_reset
+CLAUDE_VOICE_NOTIFY_CMD=off run tool-result "$(j_post t27 'Run the test suite' 90000)"
+[ -z "$spoke" ] && ok "the command mute silences the completion cue" || no "spoke while command-muted" "$spoke"
+
+cmd_reset
+CLAUDE_VOICE_NOTIFY_CMD=off run cmd-start "$(j_pre t28 'Run the test suite' '')"
+cmd_has t28 && no "the command mute still wrote command state" "(state written)" \
+  || ok "the command mute writes no command state"
+
+cmd_reset
+PATH_USE="$bin_nomac"
+run tool-result "$(j_post t29 'Run the test suite' 90000)"
+rc=$?
+{ [ -z "$spoke" ] && [ "$rc" = 0 ]; } && ok "no say -> command cue no-op, exit 0" || no "non-macOS path" "$spoke/$rc"
+run cmd-start "$(j_pre t30 'Run the test suite' '')"
+rc=$?
+[ "$rc" = 0 ] && ok "no say -> cmd-start no-op, exit 0" || no "cmd-start exit code" "$rc"
+PATH_USE="$bin_mac"
+
+cmd_reset
+PATH_USE="$bin_nojq"
+run tool-result "$(j_post t31 'Run the test suite' 90000)"
+rc=$?
+{ [ -z "$spoke" ] && [ "$rc" = 0 ]; } && ok "no jq -> command cue silent, exit 0" || no "no-jq path" "$spoke/$rc"
+PATH_USE="$bin_mac"
+
+# Malformed knobs fall back to their defaults rather than breaking the hook.
+cmd_reset
+CLAUDE_VOICE_NOTIFY_CMD_QUIET_UNDER=abc run tool-result "$(j_post t32 'Run the test suite' 90000)"
+has "Run the test suite" "a malformed quiet-under falls back to the default"
+cmd_reset
+CLAUDE_VOICE_NOTIFY_NAG_MAX=xyz run perm-request "$(j_permreq Bash p14)"
+rc=$?
+[ "$rc" = 0 ] && ok "a malformed nag cap falls back to the default" || no "malformed nag cap" "$rc"
+# A leading-zero value must parse base-10, not octal (the 0900 class of bug).
+cmd_reset
+CLAUDE_VOICE_NOTIFY_CMD_QUIET_UNDER=0090 run tool-result "$(j_post t33 'Run the test suite' 90000)"
+has "Run the test suite" "a leading-zero threshold parses base-10"
+
+# --- 8.12 early exit for uninteresting tools -----------------------------------------------
+cmd_reset
+run tool-result '{"session_id":"sess","hook_event_name":"PostToolUse","tool_name":"Read","tool_use_id":"t34","tool_input":{"file_path":"/tmp/x"},"tool_response":{},"duration_ms":90000}'
+rc=$?
+{ [ -z "$spoke" ] && [ "$rc" = 0 ]; } && ok "an uninteresting tool speaks nothing and exits 0" || no "early exit" "$spoke/$rc"
+[ -d "$work/vn-sess.cmd.d" ] && no "an uninteresting tool wrote command state" "(state written)" \
+  || ok "an uninteresting tool writes no command state"
+cmd_reset; all_reset
+
+# --- review fixes: reminders armed from Notification, bg records pruned ------------------------
+# The permission Notification is the event known to fire (it speaks the first request), so it is
+# what arms the reminder and takes up the watch. NAG_MAX=1 lets the watcher finish promptly.
+cmd_reset
+CLAUDE_VOICE_NOTIFY_NAG_EVERY=1 CLAUDE_VOICE_NOTIFY_NAG_MAX=1 run notification "$J_PERM"
+has "I need your permission to use Bash" "the permission notification still speaks first"
+has_any "the permission notification arms and drives the reminder" "still need" "Still waiting" "still blocked" "Nothing's moving"
+
+# It names the tool it parsed out of the message.
+cmd_reset
+CLAUDE_VOICE_NOTIFY_NAG_EVERY=1 CLAUDE_VOICE_NOTIFY_NAG_MAX=1 run notification "$J_PERM"
+has "permission to use Bash" "the reminder names the tool from the notification"
+
+# A prompt already armed by PermissionRequest must not be armed a second time.
+cmd_reset
+perm_add tuid9 "$(now)" 'Bash' 0 "$(now)"
+CLAUDE_VOICE_NOTIFY_NAG_EVERY=60 CLAUDE_VOICE_NOTIFY_NAG_MAX=0 run notification "$J_PERM"
+[ -f "$work/vn-sess.perm.d/pending" ] && no "the notification double-armed an armed prompt" "(two records)" \
+  || ok "an already-armed prompt is not armed twice"
+
+# PermissionRequest supersedes the anonymous record rather than adding to it.
+cmd_reset
+perm_add pending "$(now)" '' 0 "$(now)"
+CLAUDE_VOICE_NOTIFY_NAG_EVERY=60 run perm-request "$(j_permreq Bash tuid10)"
+{ perm_has tuid10 && ! perm_has pending; } && ok "PermissionRequest supersedes the anonymous record" \
+  || no "anonymous record not superseded" "(wrong set)"
+
+# PermissionRequest must return immediately: it can carry an allow/deny decision, so it never
+# runs the watcher. With a due record present it would otherwise have spoken.
+cmd_reset
+perm_add pending "$(( $(now) - 600 ))" 'Bash' 0 "$(( $(now) - 600 ))"
+CLAUDE_VOICE_NOTIFY_NAG_EVERY=1 CLAUDE_VOICE_NOTIFY_NAG_MAX=1 run perm-request "$(j_permreq Write tuid11)"
+[ -z "$spoke" ] && ok "PermissionRequest never runs the watcher" || no "PermissionRequest ran the loop" "$spoke"
+
+# Any tool completing answers a pending prompt, so it clears the anonymous record too.
+cmd_reset
+perm_add pending "$(now)" 'Bash' 0 "$(now)"
+run tool-result '{"session_id":"sess","hook_event_name":"PostToolUse","tool_name":"Read","tool_use_id":"zz","tool_input":{},"tool_response":{}}'
+[ -f "$work/vn-sess.perm.d/pending" ] && no "an anonymous reminder survived the tool running" "(still armed)" \
+  || ok "any tool completing clears the anonymous reminder"
+
+# A stale background record is pruned rather than kept forever.
+cmd_reset
+bg_add btold 'Start the dev server'
+printf '%s\n%s\n' "$(( $(now) - 99999 ))" 'Start the dev server' > "$work/vn-sess.bg.d/btold"
+CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL=60 run stop "$(j_stop_bt "$(bt_shell other)")"
+bg_has btold && no "a stale background record survived" "(still present)" || ok "a stale background record is pruned"
+cmd_reset; all_reset
+
+# --- PreToolUse precedes the permission dialog ------------------------------------------------
+# Verified against 2.1.220: a denied tool fires PreToolUse and nothing else — no PostToolUse, no
+# PostToolUseFailure, not even PermissionDenied. So a command marker exists from the moment a call
+# is proposed, not from when it starts running.
+
+# A command waiting on an unanswered prompt must not be called "still running".
+cmd_reset
+cmd_add w1 "$(( $(now) - 100 ))" 'Run the test suite'
+perm_add pending "$(now)" 'Bash' 0 "$(now)"
+CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER=1 CLAUDE_VOICE_NOTIFY_NAG_EVERY=1 CLAUDE_VOICE_NOTIFY_NAG_MAX=1 \
+  run cmd-start "$(j_pre w2 'Another command' '')"
+hasnt "Run the test suite" "a command blocked on a permission prompt is not called still running"
+
+# With no prompt outstanding the same command is announced normally.
+cmd_reset
+cmd_add w3 "$(( $(now) - 100 ))" 'Run the test suite'
+CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER=1 run cmd-start "$(j_pre w4 'Another command' '')"
+has "Run the test suite" "the same command is announced once nothing is blocked"
+
+# A refused call leaves no marker to surface later as a phantom cue.
+cmd_reset
+cmd_add w5 "$(now)" 'Write a file'
+cmd_said w5
+run perm-denied '{"session_id":"sess","hook_event_name":"PermissionDenied","tool_name":"Write","tool_use_id":"w5"}'
+cmd_has w5 && no "a refused call left its marker behind" "(still present)" || ok "a refused call drops its command marker"
+[ -f "$work/vn-sess.cmdsaid.d/w5" ] && no "a refused call left its announced marker" "(still present)" \
+  || ok "a refused call drops its announced marker"
+cmd_reset; all_reset
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

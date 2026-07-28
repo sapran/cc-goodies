@@ -178,13 +178,15 @@ degrade to a less specific cue rather than to silence or an error.
 
 ### Requirement: Model-authored descriptions are sanitised before being spoken
 
-An agent description is untrusted, model-authored free text and SHALL be sanitised before it
-reaches the speech engine. The plugin SHALL strip control characters, collapse runs of
-whitespace, and truncate the result to `CLAUDE_VOICE_NOTIFY_AGENT_DESC_MAX` characters (default
-approximately 60) at a word boundary. The description SHALL be passed as a single quoted
-argument to the speech engine and SHALL NEVER be interpolated into a command string, and any
-speech-engine command syntax embedded in it SHALL be neutralised so it cannot be interpreted as
-a directive.
+A description written by the model is untrusted free text and SHALL be sanitised before it
+reaches the speech engine. This applies to every such description the plugin speaks — the
+description of a delegated agent and the description of a shell command alike — so a single
+sanitising path governs all model-authored speech. The plugin SHALL strip control characters,
+collapse runs of whitespace, and truncate the result to `CLAUDE_VOICE_NOTIFY_AGENT_DESC_MAX`
+characters (default approximately 60) at a word boundary. The description SHALL be passed as a
+single quoted argument to the speech engine and SHALL NEVER be interpolated into a command
+string, and any speech-engine command syntax embedded in it SHALL be neutralised so it cannot be
+interpreted as a directive.
 
 #### Scenario: Long description is truncated
 
@@ -205,6 +207,13 @@ a directive.
 
 - **WHEN** a description contains shell metacharacters or quotes
 - **THEN** they are spoken or dropped as text and no shell expansion or command execution occurs
+
+#### Scenario: A command description is sanitised identically
+
+- **WHEN** a shell command's description contains control characters, speech-engine directive
+  syntax, or shell metacharacters
+- **THEN** it is sanitised, truncated and quoted under exactly the same rules as an agent
+  description, with no separate or weaker path
 
 ### Requirement: Concurrent cues are serialised
 
