@@ -93,6 +93,12 @@ has_any() {
 # The collect window makes the first dispatch of a burst wait for its siblings; tests drive
 # state directly, so waiting only slows them down.
 export CLAUDE_VOICE_NOTIFY_SUBAGENT_COLLECT=0
+# Permission reminders ride the permission Notification, so leaving them on would make every
+# permission test sit through a watcher. Off by default here; the reminder tests opt in.
+export CLAUDE_VOICE_NOTIFY_NAG_EVERY=0
+# The watcher polls every 5s in production; at that rate the watcher tests dominate the
+# suite runtime. One second keeps them honest and makes a full run quick.
+export CLAUDE_VOICE_NOTIFY_WATCH_POLL=1
 J_PERM='{"message":"Claude needs your permission to use Bash","session_id":"sess"}'
 J_IDLE='{"message":"Claude is waiting for your input","session_id":"sess"}'
 J_WEIRD='{"message":"Claude Code is reticulating splines","session_id":"sess"}'
@@ -844,11 +850,12 @@ hasnt "make release" "a command with no description still never voices the comma
 
 # --- 8.8 in-flight accounting is unchanged -------------------------------------------------
 cmd_reset; all_reset
-export CLAUDE_VOICE_NOTIFY_QUIET_UNDER=0
+# Stamp a long turn so the assertion targets the six-phrase long pool rather than trying to
+# enumerate the ten-phrase standard one — the same trick the 0.7.0 in-flight tests use.
+stamp "$(( $(now) - 300 ))"
 run stop "$(j_stop_bt "$(bt_shell btq)")"
-has_any "a running background command still lets the sign-off speak" "All done" "Your turn" "Finished" "Done" "wrap" "Back to you" "Ready when you are"
+long_signoff "a running background command still lets the sign-off speak"
 busy_is_set && no "a shell task wrote a busy marker" "(marker present)" || ok "a shell task writes no busy marker"
-export CLAUDE_VOICE_NOTIFY_QUIET_UNDER=20
 
 # --- 8.9 StopFailure ------------------------------------------------------------------------
 cmd_reset; all_reset
@@ -887,7 +894,7 @@ PATH_USE="$bin_mac"
 # its cap after one repeat, so the watcher runs out of actionable work and exits promptly.
 cmd_reset
 CLAUDE_VOICE_NOTIFY_NAG_EVERY=1 CLAUDE_VOICE_NOTIFY_NAG_MAX=1 CLAUDE_VOICE_NOTIFY_CMD=off \
-  run perm-request "$(j_permreq Bash p1)"
+  run notification "$J_PERM"
 has_any "an unanswered prompt is re-announced" "still need" "Still waiting" "still blocked" "Nothing's moving"
 has "Bash" "the reminder names the tool"
 ok "reminders work with the command path muted"
@@ -990,6 +997,55 @@ rc=$?
 { [ -z "$spoke" ] && [ "$rc" = 0 ]; } && ok "an uninteresting tool speaks nothing and exits 0" || no "early exit" "$spoke/$rc"
 [ -d "$work/vn-sess.cmd.d" ] && no "an uninteresting tool wrote command state" "(state written)" \
   || ok "an uninteresting tool writes no command state"
+cmd_reset; all_reset
+
+# --- review fixes: reminders armed from Notification, bg records pruned ------------------------
+# The permission Notification is the event known to fire (it speaks the first request), so it is
+# what arms the reminder and takes up the watch. NAG_MAX=1 lets the watcher finish promptly.
+cmd_reset
+CLAUDE_VOICE_NOTIFY_NAG_EVERY=1 CLAUDE_VOICE_NOTIFY_NAG_MAX=1 run notification "$J_PERM"
+has "I need your permission to use Bash" "the permission notification still speaks first"
+has_any "the permission notification arms and drives the reminder" "still need" "Still waiting" "still blocked" "Nothing's moving"
+
+# It names the tool it parsed out of the message.
+cmd_reset
+CLAUDE_VOICE_NOTIFY_NAG_EVERY=1 CLAUDE_VOICE_NOTIFY_NAG_MAX=1 run notification "$J_PERM"
+has "permission to use Bash" "the reminder names the tool from the notification"
+
+# A prompt already armed by PermissionRequest must not be armed a second time.
+cmd_reset
+perm_add tuid9 "$(now)" 'Bash' 0 "$(now)"
+CLAUDE_VOICE_NOTIFY_NAG_EVERY=60 CLAUDE_VOICE_NOTIFY_NAG_MAX=0 run notification "$J_PERM"
+[ -f "$work/vn-sess.perm.d/pending" ] && no "the notification double-armed an armed prompt" "(two records)" \
+  || ok "an already-armed prompt is not armed twice"
+
+# PermissionRequest supersedes the anonymous record rather than adding to it.
+cmd_reset
+perm_add pending "$(now)" '' 0 "$(now)"
+CLAUDE_VOICE_NOTIFY_NAG_EVERY=60 run perm-request "$(j_permreq Bash tuid10)"
+{ perm_has tuid10 && ! perm_has pending; } && ok "PermissionRequest supersedes the anonymous record" \
+  || no "anonymous record not superseded" "(wrong set)"
+
+# PermissionRequest must return immediately: it can carry an allow/deny decision, so it never
+# runs the watcher. With a due record present it would otherwise have spoken.
+cmd_reset
+perm_add pending "$(( $(now) - 600 ))" 'Bash' 0 "$(( $(now) - 600 ))"
+CLAUDE_VOICE_NOTIFY_NAG_EVERY=1 CLAUDE_VOICE_NOTIFY_NAG_MAX=1 run perm-request "$(j_permreq Write tuid11)"
+[ -z "$spoke" ] && ok "PermissionRequest never runs the watcher" || no "PermissionRequest ran the loop" "$spoke"
+
+# Any tool completing answers a pending prompt, so it clears the anonymous record too.
+cmd_reset
+perm_add pending "$(now)" 'Bash' 0 "$(now)"
+run tool-result '{"session_id":"sess","hook_event_name":"PostToolUse","tool_name":"Read","tool_use_id":"zz","tool_input":{},"tool_response":{}}'
+[ -f "$work/vn-sess.perm.d/pending" ] && no "an anonymous reminder survived the tool running" "(still armed)" \
+  || ok "any tool completing clears the anonymous reminder"
+
+# A stale background record is pruned rather than kept forever.
+cmd_reset
+bg_add btold 'Start the dev server'
+printf '%s\n%s\n' "$(( $(now) - 99999 ))" 'Start the dev server' > "$work/vn-sess.bg.d/btold"
+CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL=60 run stop "$(j_stop_bt "$(bt_shell other)")"
+bg_has btold && no "a stale background record survived" "(still present)" || ok "a stale background record is pruned"
 cmd_reset; all_reset
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
