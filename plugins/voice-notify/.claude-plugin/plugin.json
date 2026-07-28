@@ -1,13 +1,19 @@
 {
   "name": "voice-notify",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Spoken macOS notifications when Claude needs your attention or finishes a turn.",
   "author": {
     "name": "Volodymyr Styran",
     "url": "https://github.com/sapran"
   },
   "license": "MIT",
-  "keywords": ["notifications", "tts", "say", "macos", "hooks"],
+  "keywords": [
+    "notifications",
+    "tts",
+    "say",
+    "macos",
+    "hooks"
+  ],
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -16,7 +22,9 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
-            "args": ["start"],
+            "args": [
+              "start"
+            ],
             "async": true,
             "timeout": 5
           }
@@ -30,7 +38,9 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
-            "args": ["notification"],
+            "args": [
+              "notification"
+            ],
             "async": true,
             "timeout": 20
           }
@@ -44,7 +54,9 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
-            "args": ["stop"],
+            "args": [
+              "stop"
+            ],
             "async": true,
             "timeout": 20
           }
@@ -58,7 +70,9 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
-            "args": ["dispatch"],
+            "args": [
+              "dispatch"
+            ],
             "async": true,
             "timeout": 20
           }
@@ -72,7 +86,9 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
-            "args": ["agent-result"],
+            "args": [
+              "agent-result"
+            ],
             "async": true,
             "timeout": 20
           }
@@ -86,7 +102,9 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
-            "args": ["agent-result"],
+            "args": [
+              "agent-result"
+            ],
             "async": true,
             "timeout": 20
           }
@@ -100,7 +118,9 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/notify.sh",
-            "args": ["subagent-stop"],
+            "args": [
+              "subagent-stop"
+            ],
             "async": true,
             "timeout": 20
           }

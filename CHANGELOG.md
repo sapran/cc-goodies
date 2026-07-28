@@ -7,6 +7,48 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-28
+
+### Fixed
+
+- **`voice-notify` no longer says "all done" while a workflow is still running** (plugin
+  `0.6.0` → `0.7.0`). A turn that ended with background work outstanding spoke a turn-end
+  sign-off (*"Okay, that took a bit, but it's done."*), and the idle notification a minute
+  later added *"I'm waiting for your input."* Both said the opposite of what was happening.
+
+  The in-flight count read `background_tasks` but kept only entries of type `subagent`.
+  Claude Code reports nine kinds there — `subagent`, `workflow`, `shell`, `monitor`,
+  `MCP task`, `teammate`, `dream`, `auto-mode scan`, `cloud session` — so a running
+  **workflow** resolved to zero in flight and the sign-off fired. The marker fallback missed
+  it too: those markers are fed by a hook matched on the `Agent` tool, and a workflow is not
+  an `Agent` call.
+
+  The count is now a **block-list**: everything except `shell` and `monitor`. Those two are
+  excluded because a `run_in_background` command is often a long-lived server and a monitor
+  is a standing watch — counting either would mute the sign-off for the rest of the session.
+  A block-list rather than a list of accepted kinds, so a task type added by a future Claude
+  Code counts as outstanding by default; that errs toward "still working", which costs a
+  spurious waiting cue instead of a spoken untruth.
+
+  The idle notification had a second, separate cause: its payload carries **no** in-flight
+  list at all — only `Stop` and `SubagentStop` are given one. Those two now cache the answer
+  in a `$TMPDIR` busy marker, and the idle cue reads it and stays silent while work is
+  outstanding. Silent rather than repeating the waiting cue, which `Stop` already spoke a
+  minute earlier. Permission prompts, an agent asking a question, and an agent reporting a
+  result all still speak — each is still true. A new prompt clears the marker and the
+  existing `CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL` ages it out, so it can never mute the cue for
+  good, and `CLAUDE_VOICE_NOTIFY_SUBAGENT=off` disables it with the rest of the path.
+
+  No new hooks, no new configuration, no dependency changes. The suite grew from 92 cases to
+  118, covering each background-work kind, both exclusions, an unrecognised kind, and the
+  marker's whole lifecycle.
+
+### Changed
+
+- **`voice-notify` completion phrasing** — *"— that one's back"* → *"— is back"*, *"—
+  all wrapped up"* → *"— wrapped up"*, and the failure suffix *"— that one came back empty"*
+  → *"— that one has failed"*, which describes the outcome rather than the result.
+
 ## [0.12.0] - 2026-07-26
 
 ### Added

@@ -4,11 +4,11 @@ Spoken notifications for Claude Code on macOS. Claude tells you — in the first
 
 ## What you'll hear
 
-- **When Claude needs you** (`Notification` — a permission prompt, waiting on input after going idle, or a background agent reporting in): the actual reason in the first person, routed by context — a brisk lead-in for permission prompts (*"Quick one — I need your permission to use Bash"*), a gentler one when it's just waiting (*"Whenever you're ready — I'm waiting for your input"*), and the agent's own name when a background agent finishes or needs you.
+- **When Claude needs you** (`Notification` — a permission prompt, waiting on input after going idle, or a background agent reporting in): the actual reason in the first person, routed by context — a brisk lead-in for permission prompts (*"Quick one — I need your permission to use Bash"*), a gentler one when it's just waiting (*"Whenever you're ready — I'm waiting for your input"*), and the agent's own name when a background agent finishes or needs you. The waiting-for-input one is **suppressed while background work is still running**, because it would be untrue (see *Quiet while background work is outstanding*); the others always speak.
 - **When Claude hands work to subagents** (`PreToolUse` on the `Agent` tool): a cue that **names what was delegated**, so you know what's running without looking. One agent is named on its own (*"Handing off — review script changes."*), two are both named (*"Two helpers: review script changes, and map the hook payloads."*), and a bigger fan-out is counted rather than enumerated (*"Five helpers, starting with review script changes."*). It stays a distinct *still-working* cue, never a sign-off, and a burst of parallel dispatches is **debounced** to a single announcement.
 - **When an agent's results come back** (`PostToolUse` for foreground agents, `SubagentStop` for background ones): the same purpose again, with the outcome — *"Review script changes — done."*, or the distinct failure phrasing when an agent came back with nothing. Each agent is voiced exactly once. On a large fan-out the individual cues are **capped** (see *Naming and the name cap*) so a sweep of ten agents doesn't become ten announcements.
 - **When the batch drains**: a roll-up (*"All five helpers are back."*) — but only when something was left unsaid, i.e. you were told to wait, or the cap suppressed the individual cues. A small fan-out that was named all the way through has already told you everything, so it gets no roll-up.
-- **When the turn ends but agents are still running** (`Stop` with **background** subagents in flight): a distinct *waiting* cue (*"Still going, the helpers aren't done yet."*) instead of a turn-end sign-off — so a main session that goes idle while its background subagents keep working never says "All done" prematurely. The real sign-off waits until nothing is in flight, and the roll-up closes the loop when the last agent lands. (Blocking/foreground subagents finish before the turn ends, so they never trigger it.)
+- **When the turn ends but work is still running** (`Stop` with **background** work in flight — subagents, a workflow, a teammate, a cloud session): a distinct *waiting* cue (*"Still going, the helpers aren't done yet."*) instead of a turn-end sign-off — so a main session that goes idle while its background work keeps going never says "All done" prematurely. The real sign-off waits until nothing is in flight, and the roll-up closes the loop when the last agent lands. (Blocking/foreground subagents finish before the turn ends, so they never trigger it. A background shell command and a monitor are deliberately not counted — see *Waiting-on-background-work cue*.)
 - **When a long turn finishes** (`Stop`, nothing in flight): a sign-off, e.g. *"All done."*, *"Your turn."*, *"That's a wrap."* — and for a turn you clearly waited on, one that acknowledges it (*"Okay, that took a bit, but it's done."*). **Quick turns stay silent** (see *Quiet on quick turns* below), so you only hear "done" for the work you stepped away from.
 
 Each cue is composed from small phrase pools and *sometimes* gets a lead-in (about 40% of the time, joined by a brief spoken pause) — so it varies in both wording and cadence and never settles into a formula.
@@ -34,10 +34,10 @@ Set these as environment variables (shell profile, or Claude Code's `env` settin
 | `CLAUDE_VOICE_NOTIFY=off` | Mute without uninstalling. |
 | `CLAUDE_VOICE_NOTIFY_QUIET_UNDER` | Seconds below which a finished turn is *not* announced (default `20`). Set `0` to speak after every turn (the pre-0.3.0 behaviour); raise it to only hear about genuinely long tasks. |
 | `CLAUDE_VOICE_NOTIFY_GARNISH_PCT` | Chance (0–100) that a cue gets a leading interjection (default `40`). `0` = always the bare phrase; `100` = always a lead-in. |
-| `CLAUDE_VOICE_NOTIFY_SUBAGENT=off` | Disable the whole subagent path — the hand-off cue, the completion cues, the roll-up, the in-flight tracking, **and** the waiting cue — leaving the attention and turn-end cues. With it off, `Stop` signs off exactly as it did before in-flight tracking existed. |
+| `CLAUDE_VOICE_NOTIFY_SUBAGENT=off` | Disable the whole subagent path — the hand-off cue, the completion cues, the roll-up, the in-flight tracking, the waiting cue, **and** the idle-cue suppression — leaving the attention and turn-end cues. With it off, `Stop` signs off exactly as it did before in-flight tracking existed, and the idle notification always speaks. |
 | `CLAUDE_VOICE_NOTIFY_SUBAGENT_DEBOUNCE` | Seconds within which a burst of subagent dispatches collapses to one cue (default `10`). Raise it if a single task dispatches several waves and you only want one hand-off cue; lower it to hear each wave. |
 | `CLAUDE_VOICE_NOTIFY_SUBAGENT_COLLECT` | Seconds the first dispatch of a burst waits for its siblings to register before speaking (default `2`), so the cue can describe the whole fan-out instead of only the agent that fired first. `0` speaks immediately and will usually announce just one agent. |
-| `CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL` | Seconds after which an in-flight subagent marker is treated as stale and pruned (default `3600`), so a subagent that never reports completion (a crash, or a denied dispatch) can't wedge the count into a permanent *waiting* state. |
+| `CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL` | Seconds after which an in-flight subagent marker is treated as stale and pruned (default `3600`), so a subagent that never reports completion (a crash, or a denied dispatch) can't wedge the count into a permanent *waiting* state. The same limit ages out the marker that keeps the idle cue quiet. |
 | `CLAUDE_VOICE_NOTIFY_AGENT_NAMES=off` | Turn off naming: anonymous hand-off cues, no completion cues, no roll-up — the pre-0.6.0 behaviour, with the waiting cue and sign-off unchanged. |
 | `CLAUDE_VOICE_NOTIFY_AGENT_NAME_CAP` | Name individual completions only while at most this many subagents are in flight (default `3`). Above it, completions go quiet and the batch gets one roll-up instead. |
 | `CLAUDE_VOICE_NOTIFY_AGENT_DESC_MAX` | Characters of an agent's description to speak (default `60`), truncated at a word boundary. |
@@ -132,22 +132,54 @@ rather than queueing it, so a burst never leaves a backlog of stale announcement
 the fact. A lock left behind by a killed process is reclaimed by age, so the plugin can't be
 wedged into permanent silence.
 
-### Waiting-on-subagents cue
+### Waiting-on-background-work cue
 
-With **background** subagents, the main turn can end while they keep running: Claude Code fires
-`Stop` without waiting for them (a `SubagentStop` fires later, per agent, when each finishes).
-Left alone, `Stop` would speak a turn-end sign-off — a false "All done" for work still in
-progress. If any subagents are still in flight, voice-notify speaks a distinct **waiting** cue
-(*"Not done yet, the agents are still working."*) instead of the sign-off — regardless of the
-quiet-on-quick-turns gate, since a turn boundary with work outstanding is worth flagging — and
-remembers that it owes you the all-clear when the batch drains. When nothing is in flight
-(including every ordinary turn, and any turn whose subagents were blocking/foreground and so
-finished first), `Stop` behaves exactly as before.
+With **background** work — subagents, a workflow, a teammate, a cloud session — the main turn
+can end while it keeps running: Claude Code fires `Stop` without waiting for it (a
+`SubagentStop` fires later, per agent, when each finishes). Left alone, `Stop` would speak a
+turn-end sign-off — a false "All done" for work still in progress. If anything is still in
+flight, voice-notify speaks a distinct **waiting** cue (*"Not done yet, the agents are still
+working."*) instead of the sign-off — regardless of the quiet-on-quick-turns gate, since a turn
+boundary with work outstanding is worth flagging — and remembers that it owes you the all-clear
+when the batch drains. When nothing is in flight (including every ordinary turn, and any turn
+whose subagents were blocking/foreground and so finished first), `Stop` behaves exactly as
+before.
 
 The in-flight number comes from `background_tasks`, the list of running work that Claude Code
 puts on the `Stop` and `SubagentStop` payloads themselves — authoritative, and immune to the
 stuck-count problem a tally can have. The agent whose completion is being handled is still
 listed at its own stop, so it is excluded from its own count.
+
+Claude Code reports several kinds of work in that list. Everything counts as "still working"
+**except** two:
+
+| Kind | Counts? | Why |
+|---|---|---|
+| subagent, workflow, teammate, cloud session, MCP task, and any kind added in future | yes | work the session is genuinely waiting on |
+| background shell command (`run_in_background`) | no | often a long-lived server you started once; counting it would mute the sign-off for the rest of the session |
+| monitor | no | a standing watch, not something that returns a result |
+
+The rule is a **block-list**, not a list of accepted kinds: a kind introduced by a future Claude
+Code counts as outstanding by default. The worst that costs you is one unnecessary waiting cue;
+the alternative would be a sign-off spoken over running work.
+
+### Quiet while background work is outstanding
+
+About a minute after a turn ends, Claude Code sends an idle notification — *"Claude is waiting
+for your input."* That is false while background work is still running, and it contradicts the
+waiting cue you just heard. While anything is outstanding, voice-notify says **nothing** for
+that notification. It stays silent rather than repeating the waiting cue, because `Stop` already
+told you a minute earlier.
+
+Everything else still speaks: a permission request, an agent asking you a question, an agent
+reporting that it finished or failed. Each of those is still true and still worth interrupting
+you for.
+
+The idle notification's payload carries no in-flight list of its own — only `Stop` and
+`SubagentStop` get one — so voice-notify records the answer for it in a small `$TMPDIR` marker
+whenever it reads the real list. Sending a new prompt clears that marker, and it ages out with
+`CLAUDE_VOICE_NOTIFY_SUBAGENT_TTL`, so a leftover marker can never mute the idle cue for good.
+`CLAUDE_VOICE_NOTIFY_SUBAGENT=off` turns this off with the rest of the subagent path.
 
 Claude Code versions that don't send that list fall back to the original tally: two create-only
 marker directories under `$TMPDIR` (one for spawns, one for completions, the latter keyed by
