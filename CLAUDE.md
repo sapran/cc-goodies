@@ -153,9 +153,10 @@ across every policy, refspec form, compound command, and false-positive case.
 ## Git workflow
 
 - Branches: do work on **`develop`**; `main` is the release branch.
-- This repo eats its own dog food — `git-guard` (policy 2) blocks commits/pushes to
-  `main` from a Claude session. That's intentional. Push `main` from a terminal, or
-  fast-forward `develop` → `main` with explicit user confirmation.
+- This repo eats its own dog food — by default `git-guard` blocks commits/pushes to
+  `main` from a Claude session, and this repo keeps that default (it does **not** set
+  `GIT_GUARD_LOCAL_WRITE_CHANNEL=ask`). That's intentional. Push `main` from a terminal,
+  or fast-forward `develop` → `main` with explicit user confirmation.
 - Conventional commits (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`),
   one logical change per commit. Confirm before pushing.
 
