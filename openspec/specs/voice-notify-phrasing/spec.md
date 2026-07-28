@@ -36,8 +36,11 @@ permission request, an idle/waiting-for-input prompt, a background agent reporti
 completed, a background agent reporting that it needs input, or an unrecognised message
 (neutral fallback). Routing SHALL prefer the payload's explicit notification type where one is
 provided, falling back to matching the message wording, so that a payload without a type field
-still routes correctly. For `Stop`, the cue SHALL be routed by turn length when that
-information is available (short vs long).
+still routes correctly. The idle route SHALL apply only when no agent-like background work is
+outstanding; while work is outstanding the idle cue is suppressed entirely rather than
+re-routed to another pool, so no phrasing choice can assert that the session is idle when it is
+not. For `Stop`, the cue SHALL be routed by turn length when that information is available
+(short vs long).
 
 #### Scenario: Permission request routing
 
@@ -47,8 +50,15 @@ information is available (short vs long).
 
 #### Scenario: Idle/waiting routing
 
-- **WHEN** a `Notification` message indicates Claude is waiting for input
+- **WHEN** a `Notification` message indicates Claude is waiting for input and no background work
+  is outstanding
 - **THEN** the cue uses the gentle pool (e.g. "Whenever you're ready — I'm waiting for your input")
+
+#### Scenario: Idle routing does not apply while work is outstanding
+
+- **WHEN** a `Notification` message indicates Claude is waiting for input while background work
+  is outstanding
+- **THEN** no cue is spoken, and in particular the gentle pool is not used
 
 #### Scenario: Background agent completion routing
 
