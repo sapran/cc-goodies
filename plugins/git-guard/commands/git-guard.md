@@ -1,5 +1,5 @@
 ---
-description: View or change git-guard settings (protected branches, block-all-push, pause/resume). Writes ~/.claude/git-guard.conf with confirmation.
+description: View or change git-guard settings (protected branches, block-all-push, on-branch-write channel, pause/resume). Writes ~/.claude/git-guard.conf with confirmation.
 allowed-tools: Read, Write, Edit, Bash(test:*), Bash(grep:*), Bash(command -v jq)
 ---
 
@@ -15,6 +15,10 @@ config changes take effect on the **next Bash command** — no restart needed.
    - `GIT_GUARD_MAIN_BRANCHES` — space-separated protected branches, default `main master`
    - `GIT_GUARD_BLOCK_ALL_PUSH` — `1` to block **every** push, not just pushes to a
      protected branch (default unset)
+   - `GIT_GUARD_LOCAL_WRITE_CHANNEL` — `deny` (default) blocks an on-branch write
+     outright; `ask` escalates it to the user's permission prompt instead. Only the exact
+     lowercase `ask` counts — report any other value as the effective `deny`, since the
+     hook fails closed on anything it does not recognise
 
 2. **Lead with the guard's current state**, derived from `GIT_GUARD_DISABLE`:
    **`Guard is: ON`** when it is unset or `0`, **`Guard is: PAUSED`** when it is `1`. Then
@@ -26,14 +30,25 @@ config changes take effect on the **next Bash command** — no restart needed.
      branches are unrestricted.
    - **`GIT_GUARD_BLOCK_ALL_PUSH=1`** — additionally block **every** push regardless of
      target (strictly local-only workflow).
+   - **`GIT_GUARD_LOCAL_WRITE_CHANNEL=ask`** — an on-branch write asks instead of
+     blocking. Pushes and force-`branch` ops are unaffected and always block.
 
 3. **Offer an explicit menu** (skip the toggle that matches the current state):
    - **[1] Pause guard** — set `GIT_GUARD_DISABLE=1` (no-ops but stays installed)
    - **[2] Resume guard** — clear the pause (remove the `GIT_GUARD_DISABLE` line, or set it to `0`)
    - **[3] Edit protected branches** — change `GIT_GUARD_MAIN_BRANCHES`
    - **[4] Block-all-push on/off** — toggle `GIT_GUARD_BLOCK_ALL_PUSH`
+   - **[5] On-branch-write channel** — switch `GIT_GUARD_LOCAL_WRITE_CHANNEL` between
+     `deny` and `ask`
 
    If the user only wants to view, stop here.
+
+   **[5] is the one option that makes the guard weaker, so do not present it as a neutral
+   toggle.** Before writing it, state plainly that approving the resulting prompt performs
+   a real commit/merge/rebase on the protected branch, that git makes this recoverable
+   through the reflog only if they notice, and that the reason pushes stay blocked is that
+   a push cannot be judged from the command text alone. Never enable it because it would
+   make a task you are working on easier — only because the user asked for it.
 
 4. **Write the change.** Create/update `$HOME/.claude/git-guard.conf` with the `KEY=VALUE`
    lines, **preserving every key you are not changing** — merge into the existing file,

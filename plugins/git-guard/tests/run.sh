@@ -7,11 +7,21 @@
 # a command line), pipes it to the dev script as a SUBPROCESS, and asserts the
 # exit code. Running the dev script as a subprocess means the LIVE PreToolUse
 # hook never sees these commands — so a temp repo can sit on `main` and we can
-# feed it `git push origin main` without self-blocking. For blocking cases it
-# also captures stderr and asserts message content: the reason phrase for a
-# representative subset of ids is unchanged, and every blocking case carries
-# the protected-branch list, the new variants-also-blocked clause, and the
-# `! $cmd` escape hatch.
+# feed it `git push origin main` without self-blocking.
+#
+# THREE expected outcomes (the `expect` column), stdout and stderr captured
+# separately because each channel must be checked on BOTH streams:
+#   expect=0    (allow): exit 0, and empty stdout — an allow must not leak JSON.
+#   expect=2    (deny):  exit 2, the reason on STDERR, and empty stdout — the
+#                        deny channel never emits JSON.
+#   expect=ask  (ask):   exit 0 (same code as allow — only the token differs),
+#                        empty STDERR, and a
+#                        hookSpecificOutput.permissionDecision=="ask" object on
+#                        STDOUT whose permissionDecisionReason carries the same
+#                        message substance a deny would have printed.
+# Every deny/ask case, regardless of channel, must carry the protected-branch
+# list, a variants clause, the `! $cmd` escape hatch, and the disable pointer;
+# a representative subset also has its exact reason phrase asserted.
 #
 # Cases live in cases.tsv (id <TAB> branch <TAB> expect <TAB> command), written
 # with the editor (not a Bash call), so dangerous literals never hit a shell.
@@ -58,11 +68,46 @@ reason_for() {
     push-all)              printf '%s' "push --all/--mirror (touches protected branches)" ;;
     push-mirror)           printf '%s' "push --all/--mirror (touches protected branches)" ;;
     blockall-push-feature) printf '%s' "push (GIT_GUARD_BLOCK_ALL_PUSH is set)" ;;
+    am-on-main)            printf '%s' "am on protected branch 'main'" ;;
+    # Ask-channel cases carry the SAME reason substance as their deny twins —
+    # the two channels differ only in delivery mechanism.
+    ask-commit-on-main)    printf '%s' "commit on protected branch 'main'" ;;
+    ask-merge-on-main)     printf '%s' "merge on protected branch 'main'" ;;
+    ask-am-on-main)        printf '%s' "am on protected branch 'main'" ;;
+    ask-reset-hard-on-main) printf '%s' "reset on protected branch 'main'" ;;
+    ask-commit-on-master)  printf '%s' "commit on protected branch 'master'" ;;
+    ask-push-origin-main)  printf '%s' "push to protected branch 'main'" ;;
+    ask-branch-f-main)     printf '%s' "branch on protected branch 'main'" ;;
+    ask-blockall-push-feature) printf '%s' "push (GIT_GUARD_BLOCK_ALL_PUSH is set)" ;;
   esac
+}
+
+# Clause checks shared by BOTH channels — $1 is the human-visible text for the
+# channel under test (stderr for a deny, the parsed permissionDecisionReason for
+# an ask), $2 the command. Sets msg_ok/msg_detail in the caller's scope.
+check_common_clauses() {
+  ctext="$1"; ccmd="$2"
+  case "$ctext" in *"! $ccmd"*) ;; *) msg_ok=0; msg_detail="$msg_detail no-escape-hatch-line" ;; esac
+  case "$ctext" in *"Protected: main master."*) ;; *) msg_ok=0; msg_detail="$msg_detail no-protected-list" ;; esac
+  case "$ctext" in *"GIT_GUARD_DISABLE=1"*) ;; *) msg_ok=0; msg_detail="$msg_detail no-disable-pointer" ;; esac
+  # deny() says variants "are blocked too"; ask() says they "are judged the same
+  # way" — accurate per channel, so accept either wording.
+  case "$ctext" in
+    *"are blocked too"*|*"are judged the same way"*) ;;
+    *) msg_ok=0; msg_detail="$msg_detail no-variants-clause" ;;
+  esac
+  rp=$(reason_for "$id")
+  if [ -n "$rp" ]; then
+    case "$ctext" in *"$rp"*) ;; *) msg_ok=0; msg_detail="$msg_detail unexpected-reason[want:$rp]" ;; esac
+  fi
 }
 
 pass=0; fail=0; total=0
 tmpdirs=""
+outfile=$(mktemp) || exit 1
+errfile=$(mktemp) || exit 1
+fakehome=$(mktemp -d) || exit 1
+trap 'rm -f "$outfile" "$errfile"; rm -rf "$fakehome"' EXIT
 
 # IFS=tab so columns split on TAB only; the command column keeps its spaces.
 tab=$(printf '\t')
@@ -75,41 +120,61 @@ while IFS="$tab" read -r id branch expect command; do
   # reads it from env, not from the command text) — strip it off and export it
   # for this invocation only. Any other VAR=val prefix (e.g. FOO=bar) is part of
   # the command under test and stays in the string.
-  envassign=""
+  # Loops, so a case may set SEVERAL guard vars (e.g. BLOCK_ALL_PUSH together
+  # with LOCAL_WRITE_CHANNEL, to prove one cannot override the other). Values
+  # must not contain spaces — the split is on the first space.
+  envassigns=""
   cmd="$command"
-  case "$cmd" in
-    GIT_GUARD_*=*\ *) envassign="${cmd%% *}"; cmd="${cmd#* }" ;;
-  esac
+  while :; do
+    case "$cmd" in
+      GIT_GUARD_*=*\ *) envassigns="$envassigns ${cmd%% *}"; cmd="${cmd#* }" ;;
+      *) break ;;
+    esac
+  done
 
   repo=$(make_repo "$branch") || { echo "FAIL  $id  (could not make repo)"; fail=$((fail+1)); continue; }
   tmpdirs="$tmpdirs $repo"
 
   json=$(MSG="$cmd" CWDV="$repo" jq -nc '{tool_name:"Bash",tool_input:{command:env.MSG},cwd:env.CWDV}')
 
-  # Capture stderr only (stdout discarded): `2>&1 >/dev/null` duplicates
-  # stderr to the substitution before redirecting stdout away.
-  if [ -n "$envassign" ]; then
-    key="${envassign%%=*}"; val="${envassign#*=}"
-    err=$(printf '%s' "$json" | env "$key=$val" bash "$script" 2>&1 >/dev/null)
-  else
-    err=$(printf '%s' "$json" | bash "$script" 2>&1 >/dev/null)
-  fi
+  # Capture stdout and stderr into SEPARATE files — each channel is checked on
+  # both streams (a deny must not leak JSON to stdout; an ask must not leak its
+  # reason to stderr). HOME points at an empty dir so a real
+  # ~/.claude/git-guard.conf on the developer's machine cannot perturb the
+  # fail-closed default cases.
+  # shellcheck disable=SC2086
+  printf '%s' "$json" | env HOME="$fakehome" $envassigns bash "$script" >"$outfile" 2>"$errfile"
   got=$?
+  out=$(cat "$outfile")
+  err=$(cat "$errfile")
+
+  # `ask` cases exit 0, same as a plain allow — only the expect TOKEN differs
+  # from the numeric code compared against $got.
+  case "$expect" in ask) exp_code=0 ;; *) exp_code="$expect" ;; esac
 
   msg_ok=1; msg_detail=""
-  if [ "$expect" = "2" ] && [ "$got" = "2" ]; then
-    case "$err" in *"! $cmd"*) ;; *) msg_ok=0; msg_detail="$msg_detail no-escape-hatch-line"; esac
-    case "$err" in *"are blocked too"*) ;; *) msg_ok=0; msg_detail="$msg_detail no-variants-clause"; esac
-    case "$err" in *"Protected: main master."*) ;; *) msg_ok=0; msg_detail="$msg_detail no-protected-list"; esac
-    case "$err" in *"GIT_GUARD_DISABLE=1"*) ;; *) msg_ok=0; msg_detail="$msg_detail no-disable-pointer"; esac
+  case "$expect" in
+    2)
+      if [ "$got" = "2" ]; then
+        check_common_clauses "$err" "$cmd"
+        case "$out" in "") ;; *) msg_ok=0; msg_detail="$msg_detail unexpected-stdout-json" ;; esac
+      fi
+      ;;
+    ask)
+      if [ "$got" = "0" ]; then
+        case "$err" in "") ;; *) msg_ok=0; msg_detail="$msg_detail unexpected-stderr" ;; esac
+        pd=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // ""' 2>/dev/null)
+        reason=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason // ""' 2>/dev/null)
+        case "$pd" in ask) ;; *) msg_ok=0; msg_detail="$msg_detail bad-permissionDecision[$pd]" ;; esac
+        check_common_clauses "$reason" "$cmd"
+      fi
+      ;;
+    0)
+      case "$out" in "") ;; *) msg_ok=0; msg_detail="$msg_detail unexpected-stdout-json" ;; esac
+      ;;
+  esac
 
-    rp=$(reason_for "$id")
-    if [ -n "$rp" ]; then
-      case "$err" in *"$rp"*) ;; *) msg_ok=0; msg_detail="$msg_detail unexpected-reason[want:$rp]" ;; esac
-    fi
-  fi
-
-  if [ "$got" = "$expect" ] && [ "$msg_ok" = 1 ]; then
+  if [ "$got" = "$exp_code" ] && [ "$msg_ok" = 1 ]; then
     pass=$((pass+1))
     printf 'PASS  %-26s [%s] expect=%s got=%s\n' "$id" "$branch" "$expect" "$got"
   else
@@ -117,6 +182,37 @@ while IFS="$tab" read -r id branch expect command; do
     printf 'FAIL  %-26s [%s] expect=%s got=%s msg_ok=%s%s  cmd=%s\n' "$id" "$branch" "$expect" "$got" "$msg_ok" "$msg_detail" "$cmd"
   fi
 done < "$cases"
+
+# --- jq-missing fail-open, under BOTH channel values -------------------------
+# Not expressible as a cases.tsv row: it needs the guard's PATH emptied, not a
+# different command. The guard must warn and ALLOW, and the channel setting must
+# not change that — the jq probe runs before any channel logic is reached.
+nojq_repo=$(make_repo main) && tmpdirs="$tmpdirs $nojq_repo"
+nojq_json=$(MSG="git commit -m x" CWDV="$nojq_repo" jq -nc \
+  '{tool_name:"Bash",tool_input:{command:env.MSG},cwd:env.CWDV}')
+# bash must be invoked by ABSOLUTE path: `env PATH=<empty> bash …` would look
+# bash itself up in the emptied PATH and die 127 before the guard ever runs.
+bashbin=$(command -v bash)
+emptydir=$(mktemp -d) && tmpdirs="$tmpdirs $emptydir"
+for chan in unset ask; do
+  total=$((total+1))
+  if [ "$chan" = "unset" ]; then
+    printf '%s' "$nojq_json" | env PATH="$emptydir" HOME="$fakehome" \
+      "$bashbin" "$script" >"$outfile" 2>"$errfile"
+  else
+    printf '%s' "$nojq_json" | env PATH="$emptydir" HOME="$fakehome" \
+      GIT_GUARD_LOCAL_WRITE_CHANNEL="$chan" "$bashbin" "$script" >"$outfile" 2>"$errfile"
+  fi
+  got=$?
+  out=$(cat "$outfile")
+  if [ "$got" = "0" ] && [ -z "$out" ]; then
+    pass=$((pass+1))
+    printf 'PASS  %-26s [%s] expect=0 got=%s\n' "nojq-failopen-$chan" "main" "$got"
+  else
+    fail=$((fail+1))
+    printf 'FAIL  %-26s [%s] expect=0 got=%s stdout=%s\n' "nojq-failopen-$chan" "main" "$got" "$out"
+  fi
+done
 
 # Clean every temp repo.
 for d in $tmpdirs; do rm -rf "$d"; done

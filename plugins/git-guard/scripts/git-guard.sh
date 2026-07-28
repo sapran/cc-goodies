@@ -23,6 +23,7 @@
 #   GIT_GUARD_MAIN_BRANCHES="main master"
 #   GIT_GUARD_BLOCK_ALL_PUSH=1   # block every push, not just pushes to protected
 #   GIT_GUARD_DISABLE=1          # turn the guard off without uninstalling
+#   GIT_GUARD_LOCAL_WRITE_CHANNEL=deny|ask   # default deny; see below
 #
 # "local write" covers `git commit`, `merge`, `pull`, `rebase`, `cherry-pick`,
 # `revert`, `am` and a history-moving `reset --hard|--merge|--keep` while on a
@@ -36,13 +37,31 @@
 # back to Claude). Any other code is a non-blocking error in the hooks API and
 # would let the command run, so we never use one to deny.
 #
-# `permissionDecision: "ask"` (the harness's richer PreToolUse contract) was
-# evaluated for this guard and deliberately REJECTED — every arm here stays
-# deny-only, unlike the sibling shell-guard, which does split some arms onto
-# an ask channel. Reasoning: openspec/changes/guard-ask-escalation/design.md,
-# Decision D2 (this repo's own no-session-writes-to-main convention, `ask`
-# putting a main-push approval in the same low-friction UI as routine tool
-# approvals, and git-guard having exactly one hazard class to begin with).
+# DECISION CHANNELS. This guard is deny-only BY DEFAULT: every arm blocks with
+# exit 2 unless the user has explicitly opted in otherwise. Decision D2 of
+# openspec/changes/archive/2026-07-26-guard-ask-escalation/design.md rejected an
+# ask channel for git-guard outright; that decision still sets the DEFAULT, but
+# it conflated what the default should be with whether the channel is
+# expressible at all. GIT_GUARD_LOCAL_WRITE_CHANNEL=ask now lets a user route
+# ONE narrow class — an on-branch write (commit/merge/pull/rebase/cherry-pick/
+# revert/am and a history-moving reset, while the CURRENT branch is protected) —
+# to `permissionDecision: "ask"` instead, for workflows where a local commit on
+# `main` is acceptable but publishing it is not.
+#
+# TWO ARMS ARE NEVER CONFIGURABLE, deliberately:
+#   * every PUSH arm. A human at an ask prompt cannot judge a push: the command
+#     text does not disclose remote state (does this fast-forward, or overwrite
+#     someone else's commits?) and a destination-less `git push` does not even
+#     name its target branch — which is why the config-routing block below has
+#     to resolve it. Same "can't approve what you can't see" principle that
+#     keeps a piped download on shell-guard's deny channel. And unlike a local
+#     write, the effect leaves this machine: reflog cannot undo it.
+#   * a force `branch -f|-D|-M|-C` naming a protected branch. It moves or
+#     deletes a protected branch POINTER while the user is on some other
+#     branch — not the "I forgot to switch branches" accident the setting
+#     exists to soften — and it was closed as a bypass path once already.
+# Do not add a setting for either without arguing against the spec requirement
+# `git-guard push arms are never configurable onto the ask channel` first.
 
 set -u
 
@@ -85,6 +104,18 @@ conf_get() {
 MAIN_BRANCHES="${GIT_GUARD_MAIN_BRANCHES:-$(conf_get GIT_GUARD_MAIN_BRANCHES)}"; MAIN_BRANCHES="${MAIN_BRANCHES:-main master}"
 BLOCK_ALL_PUSH="${GIT_GUARD_BLOCK_ALL_PUSH:-$(conf_get GIT_GUARD_BLOCK_ALL_PUSH)}"
 DISABLE="${GIT_GUARD_DISABLE:-$(conf_get GIT_GUARD_DISABLE)}"
+
+# Channel for the on-branch write class. FAILS CLOSED: anything that is not the
+# exact string `ask` becomes `deny`, so a typo (`ASK`, `yes`, `1`, a malformed
+# conf line) cannot silently loosen the guard. Note this parses DIFFERENTLY from
+# DISABLE/BLOCK_ALL_PUSH above, which treat "set and not 0" as on — for those,
+# "on" is the STRICTER state, so permissive parsing is safe; here the non-default
+# value is the LOOSER one, so the same parsing would be backwards.
+LOCAL_WRITE_CHANNEL="${GIT_GUARD_LOCAL_WRITE_CHANNEL:-$(conf_get GIT_GUARD_LOCAL_WRITE_CHANNEL)}"
+case "${LOCAL_WRITE_CHANNEL:-}" in
+  ask) LOCAL_WRITE_CHANNEL="ask" ;;
+  *)   LOCAL_WRITE_CHANNEL="deny" ;;
+esac
 
 # Escape hatch.
 [ -n "${DISABLE:-}" ] && [ "$DISABLE" != "0" ] && exit 0
@@ -131,6 +162,35 @@ deny() {
   printf '%s\n' "! $cmd" >&2
   printf '%s\n' "   Or set GIT_GUARD_DISABLE=1 / see /git-guard." >&2
   return 2
+}
+
+# --- Ask-channel state ------------------------------------------------------
+# SEVERITY RESOLUTION (ported from shell-guard.sh, keep the two in sync):
+# deny > ask. deny() short-circuits the scan immediately — the main loop turns
+# its `return 2` into `exit 2` — because deny is already the maximum severity and
+# nothing later could outrank it. ask() must NOT exit: a deny-class arm in a
+# LATER segment has to still win, so ask() only RECORDS the pending decision and
+# returns 0, letting the scan run to completion. The recorded message is emitted
+# once, at the very bottom of this script, and only if no segment ever denied.
+# (Exiting 0 from ask() mid-scan was the exact regression shell-guard hit — do
+# not reintroduce it here when adding arms.)
+ASK_PENDING=0
+ASK_REASON=""
+
+ask() {
+  # $1 = human reason, same substance deny() prints — the two channels differ
+  # only in delivery mechanism, never in what they tell the human. First ask
+  # wins; a later arm must not overwrite an earlier arm's reason.
+  [ "$ASK_PENDING" = 1 ] && return 0
+  ASK_REASON="🟡 git-guard: this needs your OK — $1.
+   Protected: $MAIN_BRANCHES. Normally you would use a feature branch or 'develop'.
+   This is a LOCAL write only — approving it does not publish anything; every push to a protected branch is still blocked outright.
+   Variants of this command — different phrasing, flags, or a wrapper prefix that still resolves to the same protected branch — are judged the same way.
+   To run it in your own shell instead (! runs it there, bypassing this hook):
+! $cmd
+   Or set GIT_GUARD_DISABLE=1 / see /git-guard."
+  ASK_PENDING=1
+  return 0
 }
 
 # Evaluate ONE command segment. Returns 2 (and prints) to block, 0 to allow.
@@ -203,6 +263,12 @@ evaluate_segment() {
 
   # Resolve the target branch and apply the single policy.
   if [ "$action" = "push" ]; then
+    # EVERY exit from this branch is deny() — no configuration may route a push
+    # to the ask channel. GIT_GUARD_LOCAL_WRITE_CHANNEL is deliberately not read
+    # here. Spec: "git-guard push arms are never configurable onto the ask
+    # channel" (openspec/specs/guard-decision-tiers/spec.md). A human at an ask
+    # prompt cannot see remote state, and the destination-less case below does
+    # not even name its target branch — approving that would be uninformed.
     [ -n "${BLOCK_ALL_PUSH:-}" ] && [ "$BLOCK_ALL_PUSH" != "0" ] && { deny "push (GIT_GUARD_BLOCK_ALL_PUSH is set)"; return 2; }
     gdir="${cdir:-$cwd}"
 
@@ -278,12 +344,26 @@ evaluate_segment() {
     done
     return 0
   elif [ -n "$xtarget" ]; then
+    # Force `branch -f|-D|-M|-C`. ALWAYS deny — deliberately NOT routed by
+    # GIT_GUARD_LOCAL_WRITE_CHANNEL, even though it shares the `localwrite`
+    # label above. It retargets a protected branch POINTER from another branch,
+    # which is not the on-branch accident the setting exists to soften, and it
+    # was closed as a bypass path once already. See the header note.
     br="$xtarget"                                        # branch -f|-D|-M|-C named it
     is_main "$br" && { deny "$verb on protected branch '$br'"; return 2; }
   else
+    # The ON-BRANCH WRITE class — the ONLY arm GIT_GUARD_LOCAL_WRITE_CHANNEL
+    # governs. Reversible via the reflog and confined to this clone, which is
+    # why it is the one class a user may route to the ask channel.
     br="$(current_branch "${cdir:-$cwd}")"
     [ -n "$br" ] || return 0
-    is_main "$br" && { deny "$verb on protected branch '$br'"; return 2; }
+    if is_main "$br"; then
+      if [ "$LOCAL_WRITE_CHANNEL" = "ask" ]; then
+        ask "$verb on protected branch '$br'"   # records only; scan MUST continue
+      else
+        deny "$verb on protected branch '$br'"; return 2
+      fi
+    fi
   fi
   return 0
 }
@@ -299,5 +379,16 @@ while IFS= read -r seg; do
 done <<EOF
 $(printf '%s\n' "$cmd" | awk '{gsub(/[|&;(){}]/,"\n")}1')
 EOF
+
+# An ask recorded during the scan is emitted ONLY here — once, and only after
+# every segment has been scanned clean of a deny (any deny would already have
+# exited 2 above). jq is guaranteed present: the script exits at the top without
+# it. Exit 0 with this JSON is the harness's "escalate to the human's permission
+# prompt" contract; with nobody there to answer, the harness degrades it to a
+# blocked command.
+if [ "$ASK_PENDING" = 1 ]; then
+  jq -n --arg reason "$ASK_REASON" \
+    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask",permissionDecisionReason:$reason}}'
+fi
 
 exit 0

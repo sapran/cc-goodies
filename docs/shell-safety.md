@@ -126,17 +126,37 @@ land on a protected branch.
   whose target is protected; `GIT_GUARD_BLOCK_ALL_PUSH=1` additionally blocks **every**
   push (for a strictly local-only workflow). The protected-branch list
   `GIT_GUARD_MAIN_BRANCHES` (default `main master`) is configurable.
-- **Config:** env → `~/.claude/git-guard.conf` → default; `GIT_GUARD_DISABLE=1` pauses it.
+- **Config:** env → `~/.claude/git-guard.conf` → default; `GIT_GUARD_DISABLE=1` pauses it;
+  `GIT_GUARD_LOCAL_WRITE_CHANNEL=ask` opts one class into the ask channel (below).
 - **Fails open** if `jq` is missing (prints one line, allows the command) — a guard that
   blocked every Bash call on a missing dependency would be worse than none.
 
-**git-guard emits no `ask` — it is all-`deny`, by deliberate design.** Unlike
-shell-guard (below), every git-guard arm keeps the exit-2/stderr path. This repo's own
-convention is that no write to `main`/`master` originates from a Claude session at all
-(this file's own "Git workflow" note, `CLAUDE.md`), and `ask` would put that approval in
-the same low-friction UI as every other routine tool call — a real weakening, not a
-friction reduction, for the one hazard class git-guard exists to stop. Argued in full in
+**git-guard is all-`deny` by default; one class is opt-in `ask`.** Out of the box every
+git-guard arm keeps the exit-2/stderr path — this repo's own convention is that no write
+to `main`/`master` originates from a Claude session at all (this file's own "Git workflow"
+note, `CLAUDE.md`), and putting that approval in the same low-friction UI as every other
+routine tool call would be a real weakening, not a friction reduction. Argued in full in
 `openspec/changes/archive/2026-07-26-guard-ask-escalation/design.md`, Decision D2.
+
+That decision still sets the **default**, which does not change. What it conflated was
+*what the default should be* with *whether the channel is expressible at all*. Setting
+`GIT_GUARD_LOCAL_WRITE_CHANNEL=ask` routes exactly one class — an **on-branch write**
+(`commit`/`merge`/`pull`/`rebase`/`cherry-pick`/`revert`/`am` and a history-moving
+`reset`, while the current branch is protected) — to the ask channel, for users whose
+workflow treats a local commit on `main` as acceptable so long as it is never published.
+Only the exact lowercase `ask` enables it; anything else fails closed to `deny`.
+
+**Two arms are never configurable, permanently:**
+
+- **Every push.** A human at an `ask` prompt cannot judge a push: the command text does
+  not disclose remote state, so it cannot show whether the push fast-forwards or
+  overwrites someone else's commits, and a destination-less `git push` does not even name
+  its target branch (which is why the guard resolves it from config). This is the same
+  "can't approve what you can't see" criterion that keeps `curl … | bash` on shell-guard's
+  deny channel. A push also leaves the machine — the reflog cannot undo it.
+- **A force `git branch -f|-D|-M|-C` naming a protected branch.** It retargets a branch
+  pointer while you are on some other branch, which is not the on-branch accident the
+  setting exists to soften.
 
 Full detail and the override paths: [git-guard README](../plugins/git-guard/README.md).
 
@@ -227,6 +247,8 @@ mode + the deny list.
 Tune to taste:
 
 - Stricter git: `/git-guard` → set `GIT_GUARD_BLOCK_ALL_PUSH=1` (no pushing anywhere from a session).
+- Looser git, local only: `/git-guard` → set `GIT_GUARD_LOCAL_WRITE_CHANNEL=ask` to be
+  prompted for an on-branch write instead of blocked. Pushes still block unconditionally.
 - Extra shell patterns: `/shell-guard` → add to `SHELL_GUARD_EXTRA_PATTERNS`.
 - Pause without uninstalling: `GIT_GUARD_DISABLE=1` / `SHELL_GUARD_DISABLE=1`.
 
