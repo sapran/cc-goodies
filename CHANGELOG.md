@@ -9,6 +9,20 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [0.14.0] - 2026-07-28
 
+### Fixed
+
+- **`shell-guard` no longer stops guarding in silence when `awk` is unavailable** (plugin
+  `0.4.1` → `0.4.2`). Every split in the script — segments, pipeline stages, subshell
+  bodies, the `SHELL_GUARD_EXTRA_PATTERNS` list — goes through `awk`. Without it each split
+  yields nothing, no arm is ever evaluated, and the hook falls through to `exit 0`,
+  indistinguishable from a clean allow: `rm -rf /` would pass unremarked.
+
+  It still fails open, matching the existing missing-`jq` behaviour, because blocking every
+  Bash call over a missing dependency is worse than not guarding. But it now says so, which
+  is the whole point — the previous behaviour was the worst of both, an unguarded shell that
+  looked guarded. A second check catches an `awk` that is present but fails at run time.
+  The same fix is applied to `git-guard`. Both harnesses gained fail-open-and-warn cases.
+
 ### Added
 
 - **`git-guard` gains an opt-in ask channel for on-branch writes** (plugin `0.2.4` →

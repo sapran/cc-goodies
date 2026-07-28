@@ -78,6 +78,15 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
+# Same reasoning for awk, which splits the command into segments below: without
+# it nothing is ever judged and the script reaches `exit 0` as a silent allow.
+# Fail OPEN, but say so. (The empty-split check further down catches an awk that
+# is present but fails at runtime.)
+if ! command -v awk >/dev/null 2>&1; then
+  echo "git-guard: awk not found; guard disabled (cannot split the command)." >&2
+  exit 0
+fi
+
 # Defence in depth: only act on the Bash tool.
 tool=$(printf '%s' "$input" | jq -r '.tool_name // ""')
 [ "$tool" = "Bash" ] || exit 0

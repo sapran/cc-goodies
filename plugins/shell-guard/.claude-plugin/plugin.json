@@ -1,6 +1,6 @@
 {
   "name": "shell-guard",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Block or ask before a small set of catastrophic shell commands run (rm -rf / or ~, dd/redirect to a disk, mkfs, fork bombs, curl|sh, chmod 777, eval, sudo, reboot/shutdown). Catches plain-form accidents; fail-open, configurable.",
   "author": {
     "name": "Volodymyr Styran",
