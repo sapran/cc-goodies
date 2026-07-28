@@ -1,7 +1,7 @@
 {
   "name": "voice-notify",
-  "version": "0.7.0",
-  "description": "Spoken macOS notifications when Claude needs your attention or finishes a turn.",
+  "version": "0.8.0",
+  "description": "Spoken macOS notifications when Claude needs your attention, runs a long command, or finishes a turn.",
   "author": {
     "name": "Volodymyr Styran",
     "url": "https://github.com/sapran"

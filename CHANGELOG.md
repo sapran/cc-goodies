@@ -7,6 +7,64 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-29
+
+### Added
+
+- **`voice-notify` speaks about shell commands and about sessions that have stopped**
+  (plugin `0.7.0` → `0.8.0`). The subagent lifecycle already had a voice; the two other
+  things that keep you waiting did not.
+
+  **Long-running commands.** A session runs dozens of shell commands a turn and nearly all
+  finish instantly, so a command cue is *earned by duration*, never by dispatch: a
+  still-running cue past `CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER` (default 45s) and a
+  completion cue past `CLAUDE_VOICE_NOTIFY_CMD_QUIET_UNDER` (default 60s) — the same
+  quiet-on-quick-turns idea applied per command. A failure, a timeout and an interruption are
+  distinguished from the failure event's own `is_timeout`/`is_interrupt` rather than guessed,
+  and a command that was announced as running *always* reports its completion, whatever the
+  threshold would say.
+
+  **Only the description is ever spoken, never the command line.** A command routinely carries
+  tokens, hostnames and paths; reading it aloud would be unintelligible and a way to leak a
+  credential to the room.
+
+  **One watcher per session.** Claude Code fires no hook while a command runs, so the
+  still-running cue needs a live process — but one *elected* per session via a create-only
+  claim, not a timer per `Bash` call. It exits as soon as nothing is left that it could say,
+  and an abandoned claim is reclaimed by age.
+
+  **Background commands.** These have no completion event at all — the `notification_type`
+  enum has nothing for a shell command — so the `backgroundTaskId` returned at launch is
+  recorded and its *absence* from a later `Stop`'s `background_tasks` is the finish signal.
+  This deliberately does **not** change what counts as outstanding work: a running background
+  command still never gates the turn-end sign-off, so a dev server cannot mute *"All done"*.
+
+  **Stalled turns.** A turn killed by an API error fires `StopFailure`, not `Stop` — so
+  voice-notify said nothing and the session sat abandoned. It now speaks a distinct stalled cue
+  naming the cause (rate limit, overload, auth, billing, output limit), bypassing the duration
+  gate.
+
+  **Unanswered permission prompts.** A prompt was announced once; miss it and the session waited
+  in silence. It is now re-announced every `CLAUDE_VOICE_NOTIFY_NAG_EVERY` seconds (default 60),
+  naming the tool, bounded by `CLAUDE_VOICE_NOTIFY_NAG_MAX` repeats (default 5) so an
+  unattended session cannot talk all night. It is disarmed by the tool running, by a denial, or
+  by a new prompt.
+
+  New knobs: `CLAUDE_VOICE_NOTIFY_CMD`, `CLAUDE_VOICE_NOTIFY_CMD_QUIET_UNDER`,
+  `CLAUDE_VOICE_NOTIFY_CMD_RUNNING_AFTER`, `CLAUDE_VOICE_NOTIFY_NAG_EVERY`,
+  `CLAUDE_VOICE_NOTIFY_NAG_MAX`. All state stays in `$TMPDIR`, so `/plugin uninstall` remains
+  the complete revert and no install command is needed.
+
+### Changed
+
+- **`voice-notify`'s `PostToolUse`/`PostToolUseFailure` hooks now match every tool**, not just
+  `Agent`. Approving a permission prompt is signalled only by the tool actually running, so the
+  disarm has to see it. The script decides in one `jq` call and exits immediately for tools it
+  has nothing to say about.
+- **Description sanitising is now one shared path** for agent and command descriptions, under
+  the same `CLAUDE_VOICE_NOTIFY_AGENT_DESC_MAX` limit, rather than a second weaker path for
+  commands.
+
 ## [0.14.0] - 2026-07-28
 
 ### Fixed
