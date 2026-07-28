@@ -419,7 +419,12 @@ perm_dir()    { printf '%s/vn-%s.perm.d'    "${TMPDIR:-/tmp}" "$1"; }
 # so a live watcher is never displaced and a dead one is reclaimed promptly.
 watch_dir()   { printf '%s/vn-%s.watch.d'   "${TMPDIR:-/tmp}" "$1"; }
 
-WATCH_POLL=5        # seconds between polls
+# Seconds between polls. Configurable mainly so the test suite can drive the watcher
+# quickly; there is little reason to change it in normal use.
+WATCH_POLL="${CLAUDE_VOICE_NOTIFY_WATCH_POLL:-5}"
+case "$WATCH_POLL" in ''|*[!0-9]*) WATCH_POLL=5 ;; esac
+WATCH_POLL=$((10#$WATCH_POLL))
+[ "$WATCH_POLL" -lt 1 ] && WATCH_POLL=1
 WATCH_MAX_LIFE=900  # hard stop, so a watcher can never outlive its usefulness unboundedly
 WATCH_STALE=45      # an election whose heartbeat stopped this long ago is reclaimable
 
@@ -635,6 +640,9 @@ drain_bg() {
   command -v jq >/dev/null 2>&1 || return 0
   d=$(bg_dir "$sid")
   [ -d "$d" ] || return 0
+  # Aged out like every other marker dir, so a command whose id never leaves the list cannot
+  # leave a record behind indefinitely.
+  prune_dir "$d" "$(( $(date +%s) - ttl ))"
   # "Is there a list at all?" is asked separately from "what is in it", so an empty list (every
   # background command has finished) stays distinguishable from no list (nothing to conclude).
   have=$(printf '%s' "$input" \
@@ -783,6 +791,9 @@ elect_watcher() {
 
 # disarm_perm <sid> <tool_use_id>: the prompt was answered (the tool ran, or was denied).
 disarm_perm() {
+  # A pending permission prompt blocks the session, so *any* tool completing means it was
+  # answered. That clears the anonymous record as well as the id-keyed one.
+  rm -f "$(perm_dir "$1")/pending" 2>/dev/null
   [ -n "$2" ] || return 0
   rm -f "$(perm_dir "$1")/$2" 2>/dev/null
 }
@@ -1102,6 +1113,31 @@ case "$event" in
       *)                      garnish="$NEUTRAL_GARNISH" ;;
     esac
     speak_locked "$(compose "$garnish" "$reason")"
+
+    # A permission prompt blocks the session until it is answered, so it is the one cue worth
+    # repeating. Arm the reminder from *this* event rather than from PermissionRequest alone:
+    # this notification is known to fire (it is what speaks the first request), while
+    # PermissionRequest could not be shown to fire at all — a headless probe never produces a
+    # dialog. PermissionRequest still refines the record with the exact tool_use_id when it does
+    # arrive. Speaking happens first above, so the reminder never delays the first announcement.
+    if [ "$sub" = "permission" ] && [ "$nag_every" -gt 0 ]; then
+      psid=$(session_id)
+      [ -n "$psid" ] || psid="nosess"
+      # Only one permission prompt can be pending at a time, so a record already armed by
+      # PermissionRequest (keyed by its tool_use_id) is this same prompt — don't double-arm.
+      if [ "$(count_dir "$(perm_dir "$psid")")" -eq 0 ] && mkdir -p "$(perm_dir "$psid")" 2>/dev/null; then
+        ptool=""
+        case "$msg" in *"to use "*) ptool="${msg##*to use }" ;; esac
+        ptool=$(sanitise_desc "$ptool")
+        nowts=$(date +%s)
+        printf '%s\n%s\n0\n%s\n' "$nowts" "$ptool" "$nowts" \
+          > "$(perm_dir "$psid")/pending" 2>/dev/null
+      fi
+      # The watcher runs here, in a plain notification hook, rather than inside
+      # PermissionRequest — that event can return an allow/deny decision, and a long-running
+      # loop has no business inside it.
+      elect_watcher "$psid"
+    fi
     ;;
 
   dispatch)
@@ -1323,7 +1359,11 @@ EOF
     nowts=$(date +%s)
     printf '%s\n%s\n0\n%s\n' "$nowts" "$(sanitise_desc "$(tool_name)")" "$nowts" \
       > "$(perm_dir "$sid")/$tuid" 2>/dev/null
-    elect_watcher "$sid"
+    # This record supersedes the anonymous one the Notification arm may have armed for the same
+    # prompt, so the user is reminded once, not twice.
+    rm -f "$(perm_dir "$sid")/pending" 2>/dev/null
+    # Deliberately does NOT elect the watcher: this event can return an allow/deny decision, so
+    # it must return immediately. The accompanying Notification takes up the watch.
     exit 0
     ;;
 
