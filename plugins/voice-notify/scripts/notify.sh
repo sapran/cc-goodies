@@ -6,8 +6,12 @@
 #   event = "stop" | "notification" | "start" | "dispatch" | "agent-result" | "subagent-stop"
 # The hook's JSON arrives on stdin: "notification" reads .message and .notification_type;
 # "dispatch" reads .tool_input.description; "agent-result" reads .tool_input.description and
-# .tool_response; "subagent-stop" reads .agent_id, .agent_type and .background_tasks; every
-# event reads .session_id to key its ephemeral state.
+# .tool_response; "subagent-stop" reads .agent_id, .agent_type and .background_tasks; "stop"
+# reads .background_tasks; every event reads .session_id to key its ephemeral state.
+#
+# Only "stop" and "subagent-stop" are given .background_tasks by the harness, so those two are
+# the only events that can tell whether background work is still outstanding. They leave that
+# answer in a marker file for "notification", whose payload carries no such list.
 #
 # Environment:
 #   CLAUDE_VOICE="Name"                 override the voice (default: "Matilda (Premium)")
@@ -278,6 +282,31 @@ burst_dir()   { printf '%s/vn-%s.burst.d'   "${TMPDIR:-/tmp}" "$1"; }
 # means the batch owes the user a roll-up when it finally drains.
 waited_file() { printf '%s/vn-%s.waited' "${TMPDIR:-/tmp}" "$1"; }
 capped_file() { printf '%s/vn-%s.capped' "${TMPDIR:-/tmp}" "$1"; }
+# Busy marker: "the harness reported outstanding work the last time we could see it". Only Stop
+# and SubagentStop carry the task list; a Notification carries none, so the idle cue reads this
+# instead of guessing. First line is the epoch, so the in-flight TTL ages it out and a marker
+# orphaned by a killed process can never mute the idle cue for good.
+busy_file() { printf '%s/vn-%s.busy' "${TMPDIR:-/tmp}" "$1"; }
+
+# set_busy <sid> <count>: record outstanding work, or clear the record when nothing is left.
+# A non-numeric count means we never resolved one — leave the record untouched rather than
+# inventing an all-clear.
+set_busy() {
+  case "$2" in ''|*[!0-9]*) return 0 ;; esac
+  if [ "$2" -gt 0 ]; then
+    date +%s > "$(busy_file "$1")" 2>/dev/null
+  else
+    rm -f "$(busy_file "$1")" 2>/dev/null
+  fi
+}
+
+# is_busy <sid>: true only when the record exists and is younger than the in-flight TTL.
+is_busy() {
+  local ts
+  ts=$(read_ts "$(busy_file "$1")")
+  case "$ts" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$(( $(date +%s) - ts ))" -lt "$ttl" ]
+}
 
 # Read .agent_id / .agent_type, with the id sanitised so it is safe as a filename.
 agent_id() {
@@ -328,7 +357,11 @@ prune_dir() {
 }
 
 # inflight_markers <sid>: the fallback count — spawns minus completions, clamped at zero,
-# after pruning anything stale.
+# after pruning anything stale. Fed only by the Agent-matched hooks, so it sees subagents and
+# nothing else: a workflow is not an Agent call and leaves no marker. That gap is deliberate.
+# This path exists for Claude Code versions whose Stop payload carries no task list; on versions
+# that do carry one, inflight_payload wins and already covers every kind of work. Closing the gap
+# here would mean new hook matchers and per-kind completion tracking for no gain.
 inflight_markers() {
   local sid="$1" cutoff n
   cutoff=$(( $(date +%s) - ttl ))
@@ -340,15 +373,26 @@ inflight_markers() {
   printf '%s' "$n"
 }
 
-# inflight_payload <exclude-agent-id>: subagents still registered with the harness, excluding
-# the one whose completion is being handled (it is still listed, as "running", at its own stop).
-# Returns non-zero when the payload carries no task list, so callers fall back to the markers.
+# inflight_payload <exclude-agent-id>: background work still registered with the harness,
+# excluding the one whose completion is being handled (it is still listed, as "running", at its
+# own stop). Returns non-zero when the payload carries no task list, so callers fall back to the
+# markers.
+#
+# The harness reports several kinds of work here — subagent, workflow, shell, monitor, MCP task,
+# teammate, dream, auto-mode scan, cloud session. This counts everything *except* shell and
+# monitor: a background command is often a long-lived server and a monitor is a standing watch,
+# so counting either would mute the turn-end sign-off for the rest of the session. Deliberately a
+# block-list, not an allow-list — a task type added by a future Claude Code counts as outstanding
+# by default, which errs toward "still working" the way prune_dir errs on unreadable markers. A
+# spurious waiting cue is a nuisance; a sign-off spoken over running work is a lie.
 inflight_payload() {
   local n
   command -v jq >/dev/null 2>&1 || return 1
   n=$(printf '%s' "$input" | jq -r --arg me "$1" '
         if (.background_tasks | type) == "array" then
-          [ .background_tasks[] | select(.type == "subagent") | select(.id != $me) ] | length
+          [ .background_tasks[]
+            | select(.type != "shell" and .type != "monitor")
+            | select(.id != $me) ] | length
         else "" end' 2>/dev/null)
   case "$n" in ''|*[!0-9]*) return 1 ;; esac
   printf '%s' "$n"
@@ -499,6 +543,10 @@ case "$event" in
     sid=$(session_id)
     [ -n "$sid" ] || exit 0
     date +%s > "$(state_file "$sid")" 2>/dev/null
+    # A new prompt proves the user is back at the keyboard, so the idle cue has nothing left to
+    # protect them from. Always clear it, even with the subagent path muted, so toggling the mute
+    # can't strand a marker.
+    rm -f "$(busy_file "$sid")" 2>/dev/null
     # Reset the roll-up bookkeeping only when nothing is outstanding: a turn submitted while
     # background agents still run must not lose the all-clear it was promised.
     [ "$(inflight_markers "$sid")" -eq 0 ] && clear_batch "$sid"
@@ -527,7 +575,12 @@ case "$event" in
     # to zero in-flight and fall through to the normal sign-off.
     if [ "${CLAUDE_VOICE_NOTIFY_SUBAGENT:-on}" != "off" ]; then
       sub_sid="$sid"; [ -n "$sub_sid" ] || sub_sid="nosess"
-      if ! inflight=$(inflight_payload ""); then
+      # Record the state for the idle Notification that may follow a minute from now. Only the
+      # harness's own list is trustworthy enough to record: the marker fallback can't see a
+      # workflow, so a zero from it would be a guess, not an all-clear.
+      if inflight=$(inflight_payload ""); then
+        set_busy "$sub_sid" "$inflight"
+      else
         inflight=$(inflight_markers "$sub_sid")
       fi
       if [ "$inflight" -gt 0 ]; then
@@ -564,6 +617,16 @@ case "$event" in
       ntype=$(printf '%s' "$input" | jq -r '.notification_type // ""' 2>/dev/null)
     fi
     classify "$msg" "$ntype"
+    # "Waiting for your input" is the one cue that becomes false when work is outstanding — Stop
+    # already said the helpers are still running, and this would contradict it a minute later.
+    # Stay silent instead of re-routing: repeating the waiting cue adds noise, not information.
+    # Every other subtype (permission, an agent asking for input, an agent reporting a result)
+    # stays audible, because each is still true and still worth interrupting for.
+    if [ "$sub" = "idle" ] && [ "${CLAUDE_VOICE_NOTIFY_SUBAGENT:-on}" != "off" ]; then
+      nsid=$(session_id)
+      [ -n "$nsid" ] || nsid="nosess"
+      is_busy "$nsid" && exit 0
+    fi
     case "$sub" in
       permission|agent_input) garnish="$BRISK_GARNISH" ;;
       idle)                   garnish="$GENTLE_GARNISH" ;;
@@ -678,7 +741,8 @@ case "$event" in
     atype=$(printf '%s' "$input" | jq -r '.tool_response.agentType // ""' 2>/dev/null)
 
     # The foreground agent's own SubagentStop has already recorded its completion, so this
-    # count excludes it.
+    # count excludes it. No set_busy here on purpose: a PostToolUse payload carries no task list,
+    # so this count is the marker fallback, and the Stop that follows will record the real one.
     inflight=$(inflight_markers "$sid")
     if [ "$inflight" -gt "$name_cap" ]; then
       date +%s > "$(capped_file "$sid")" 2>/dev/null
@@ -703,6 +767,17 @@ case "$event" in
     # unique name when the id is unavailable (jq missing) so the completion still registers.
     [ -n "$aid" ] || aid="a$(date +%s).$$.${RANDOM:-0}"
     mark "$(done_dir "$sid")" "$aid"
+
+    # Refresh the idle-cue marker first, before any naming-dependent exit below: this is the
+    # event that turns "still working" back into "actually idle", and it has to do so even with
+    # naming switched off. Reused further down so the list is parsed once.
+    if inflight=$(inflight_payload "$aid"); then
+      set_busy "$sid" "$inflight"
+      have_payload=1
+    else
+      have_payload=""
+    fi
+
     [ "$naming" = "on" ] || exit 0
     command -v jq >/dev/null 2>&1 || exit 0
 
@@ -726,9 +801,7 @@ case "$event" in
     ok="yes"
     [ -n "$last_msg" ] || ok="no"
 
-    if ! inflight=$(inflight_payload "$aid"); then
-      inflight=$(inflight_markers "$sid")
-    fi
+    [ -n "$have_payload" ] || inflight=$(inflight_markers "$sid")
 
     if [ "$inflight" -gt "$name_cap" ]; then
       date +%s > "$(capped_file "$sid")" 2>/dev/null
