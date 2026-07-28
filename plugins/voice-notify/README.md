@@ -155,7 +155,7 @@ Claude Code reports several kinds of work in that list. Everything counts as "st
 
 | Kind | Counts? | Why |
 |---|---|---|
-| subagent, workflow, teammate, cloud session, MCP task, and any kind added in future | yes | work the session is genuinely waiting on |
+| subagent, workflow, teammate, cloud session, MCP task, dream, auto-mode scan — and any kind added in future | yes | work the session is genuinely waiting on |
 | background shell command (`run_in_background`) | no | often a long-lived server you started once; counting it would mute the sign-off for the rest of the session |
 | monitor | no | a standing watch, not something that returns a result |
 

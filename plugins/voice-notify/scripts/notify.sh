@@ -6,8 +6,9 @@
 #   event = "stop" | "notification" | "start" | "dispatch" | "agent-result" | "subagent-stop"
 # The hook's JSON arrives on stdin: "notification" reads .message and .notification_type;
 # "dispatch" reads .tool_input.description; "agent-result" reads .tool_input.description and
-# .tool_response; "subagent-stop" reads .agent_id, .agent_type and .background_tasks; "stop"
-# reads .background_tasks; every event reads .session_id to key its ephemeral state.
+# .tool_response; "subagent-stop" reads .agent_id, .agent_type, .last_assistant_message and
+# .background_tasks; "stop" reads .background_tasks; every event reads .session_id to key its
+# ephemeral state.
 #
 # Only "stop" and "subagent-stop" are given .background_tasks by the harness, so those two are
 # the only events that can tell whether background work is still outstanding. They leave that
