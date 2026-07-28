@@ -291,10 +291,11 @@ in the permission prompt, not just in a stderr report.
 ## Verifying it works
 
 There is no test framework — the guards are verified by piping synthetic tool-call JSON
-to the hook scripts and asserting exit codes (`0` = allow or shell-guard `ask`, `2` =
-deny) plus, for shell-guard's ask-channel cases, the `permissionDecision`/
+to the hook scripts and asserting exit codes (`0` = allow **or** `ask`, `2` = deny) plus,
+for ask-channel cases in **either** guard, the `permissionDecision`/
 `permissionDecisionReason` JSON on stdout — in real temp git repos where branch state
-matters. See [CLAUDE.md](../CLAUDE.md#testing) and the
+matters. An allow must leave both streams empty, a deny must leave stdout empty, and an
+ask must leave stderr empty; each guard's harness asserts all three. See [CLAUDE.md](../CLAUDE.md#testing) and the
 [hook input contract](../CLAUDE.md#hook-authoring--the-input-contract-important).
 
 Quick manual smoke after install (`/hooks` reload first):

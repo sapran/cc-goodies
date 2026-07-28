@@ -5,8 +5,9 @@
 # Wired as a PreToolUse hook on the Bash tool. The tool call's JSON arrives on
 # stdin; we read .tool_input.command and .cwd, work out which git action is
 # being run and against which branch, and block (exit 2) when it would land on a
-# protected branch. Anything that is not a protected-branch write is passed
-# straight through untouched.
+# protected branch — or, for the one class the user can opt in (see DECISION
+# CHANNELS below), escalate to an ask prompt instead. Anything that is not a
+# protected-branch write is passed straight through untouched.
 #
 # This is a convenience guard, not a sandbox. It catches the plain accident
 # (`git push origin main`, a commit while on `main`); it does NOT try to defeat
@@ -33,9 +34,12 @@
 # read the command, so it no-ops with a one-line warning rather than blocking
 # every Bash call.
 #
-# Exit codes: 0 = allow (Claude Code runs the command), 2 = block (stderr is fed
-# back to Claude). Any other code is a non-blocking error in the hooks API and
-# would let the command run, so we never use one to deny.
+# Exit codes: 0 = allow (Claude Code runs the command), OR ask (a
+# permissionDecision:"ask" object on stdout — the harness escalates to the
+# human's own permission prompt); 2 = block (stderr is fed back to Claude). Any
+# other code is a non-blocking error in the hooks API and would let the command
+# run, so we never use one to deny. Same contract as shell-guard.sh — keep the
+# two in sync.
 #
 # DECISION CHANNELS. This guard is deny-only BY DEFAULT: every arm blocks with
 # exit 2 unless the user has explicitly opted in otherwise. Decision D2 of
@@ -176,15 +180,26 @@ deny() {
 # not reintroduce it here when adding arms.)
 ASK_PENDING=0
 ASK_REASON=""
+ASK_SUBJECT=""
 
 ask() {
-  # $1 = human reason, same substance deny() prints — the two channels differ
-  # only in delivery mechanism, never in what they tell the human. First ask
-  # wins; a later arm must not overwrite an earlier arm's reason.
+  # $1 = human reason. Names the same matched rule deny() names and carries the
+  # same escape hatch, but the WORDING is deliberately channel-specific (deny
+  # says variants are "blocked too", ask says they are "judged the same way").
+  # tests/run.sh asserts the per-channel phrasing, so change both together.
+  # First ask wins; a later arm must not overwrite an earlier arm's reason.
   [ "$ASK_PENDING" = 1 ] && return 0
+  ASK_SUBJECT="$1"
+  # SCOPE OF THE CLAIM BELOW: the guard classified one SEGMENT, but approving
+  # this prompt releases the WHOLE Bash command — including forms the guard
+  # deliberately does not resolve (`bash -c "…"`, `sudo -u`, aliases; see the
+  # threat-model note above). So the promise is scoped to what was matched and
+  # to pushes the guard can resolve — never an unconditional "nothing will be
+  # published", which a compound command can falsify.
   ASK_REASON="🟡 git-guard: this needs your OK — $1.
    Protected: $MAIN_BRANCHES. Normally you would use a feature branch or 'develop'.
-   This is a LOCAL write only — approving it does not publish anything; every push to a protected branch is still blocked outright.
+   The write this matched is LOCAL — it publishes nothing by itself, and every push this guard can resolve to a protected branch is still blocked outright.
+   Approving releases the WHOLE command line shown below — read it before you accept.
    Variants of this command — different phrasing, flags, or a wrapper prefix that still resolves to the same protected branch — are judged the same way.
    To run it in your own shell instead (! runs it there, bypassing this hook):
 ! $cmd
@@ -266,9 +281,11 @@ evaluate_segment() {
     # EVERY exit from this branch is deny() — no configuration may route a push
     # to the ask channel. GIT_GUARD_LOCAL_WRITE_CHANNEL is deliberately not read
     # here. Spec: "git-guard push arms are never configurable onto the ask
-    # channel" (openspec/specs/guard-decision-tiers/spec.md). A human at an ask
-    # prompt cannot see remote state, and the destination-less case below does
-    # not even name its target branch — approving that would be uninformed.
+    # channel" (openspec/specs/guard-decision-tiers/spec.md), and asserted by
+    # the `ask-push-*` cases in tests/cases.tsv and the `ask-*-to-main` cases in
+    # tests/run-routing.sh — so this is enforced, not just a convention. A human
+    # at an ask prompt cannot see remote state, and the destination-less case
+    # below does not even name its target branch: approving that is uninformed.
     [ -n "${BLOCK_ALL_PUSH:-}" ] && [ "$BLOCK_ALL_PUSH" != "0" ] && { deny "push (GIT_GUARD_BLOCK_ALL_PUSH is set)"; return 2; }
     gdir="${cdir:-$cwd}"
 
@@ -344,11 +361,15 @@ evaluate_segment() {
     done
     return 0
   elif [ -n "$xtarget" ]; then
-    # Force `branch -f|-D|-M|-C`. ALWAYS deny — deliberately NOT routed by
-    # GIT_GUARD_LOCAL_WRITE_CHANNEL, even though it shares the `localwrite`
-    # label above. It retargets a protected branch POINTER from another branch,
-    # which is not the on-branch accident the setting exists to soften, and it
-    # was closed as a bypass path once already. See the header note.
+    # Any arm that named its OWN target branch — today only a force
+    # `branch -f|--force|-D|-M|-C`, which is the sole place $xtarget is set.
+    # ALWAYS deny: deliberately NOT routed by GIT_GUARD_LOCAL_WRITE_CHANNEL,
+    # even though it shares the `localwrite` label above. It retargets a
+    # protected branch POINTER from another branch, which is not the on-branch
+    # accident the setting exists to soften, and it was closed as a bypass path
+    # once already. Asserted by the `ask-branch-*` cases in tests/cases.tsv.
+    # A future verb that sets $xtarget inherits always-deny — intended, but
+    # re-read this comment before adding one.
     br="$xtarget"                                        # branch -f|-D|-M|-C named it
     is_main "$br" && { deny "$verb on protected branch '$br'"; return 2; }
   else
@@ -382,13 +403,24 @@ EOF
 
 # An ask recorded during the scan is emitted ONLY here — once, and only after
 # every segment has been scanned clean of a deny (any deny would already have
-# exited 2 above). jq is guaranteed present: the script exits at the top without
-# it. Exit 0 with this JSON is the harness's "escalate to the human's permission
-# prompt" contract; with nobody there to answer, the harness degrades it to a
-# blocked command.
+# exited 2 above). Exit 0 with this JSON is the harness's "escalate to the
+# human's permission prompt" contract; in a HEADLESS session with nobody to
+# answer, the harness degrades it to a blocked command — verified for headless
+# only, see openspec/changes/archive/2026-07-26-guard-ask-escalation/design.md
+# Decision D3, which explicitly did NOT test an ask fired inside a subagent of a
+# live interactive session.
 if [ "$ASK_PENDING" = 1 ]; then
-  jq -n --arg reason "$ASK_REASON" \
-    '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask",permissionDecisionReason:$reason}}'
+  if ! jq -n --arg reason "$ASK_REASON" \
+       '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask",permissionDecisionReason:$reason}}'; then
+    # DELIVERY FAILED -> fall back to DENY, never to allow. jq is present (the
+    # script exits at the top without it), but the CALL can still fail: --arg
+    # carries the whole command text into argv, so a large enough tool call
+    # hits E2BIG. deny() is immune because printf is a shell builtin. Exiting 0
+    # here would be read as a plain allow — a guard that cannot deliver its ask
+    # has made no decision, so it must fall back to the safe channel.
+    deny "$ASK_SUBJECT (could not deliver the ask decision)"
+    exit 2
+  fi
 fi
 
 exit 0

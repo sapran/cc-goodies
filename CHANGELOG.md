@@ -51,9 +51,28 @@ project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   severity discipline: a deny anywhere in a compound command still outranks an ask
   recorded earlier, and two ask-class segments emit exactly one decision object.
 
-  Test coverage grew from 57 to 101 cases across the two git-guard harnesses, including a
-  third assertion form (exit 0 **plus** the JSON payload) that the exit-code-only harness
-  could not express before.
+  **If the ask cannot be delivered, the guard denies rather than allowing.** `jq` is
+  present (the hook exits without it), but the emit call itself can fail — `--arg` carries
+  the whole command into the argument list, so a large enough tool call exceeds `ARG_MAX`.
+  That previously produced exit 0 with no decision object, which the harness reads as a
+  plain allow: the same command denied on the default channel but ran silently on the ask
+  channel. A guard that cannot deliver its ask has made no decision, so it now falls back
+  to the deny channel.
+
+  **The prompt does not over-promise.** Approving a `permissionDecision: "ask"` releases
+  the *whole* Bash command, but the guard classified only one segment of it. The reason
+  text scopes its assurance to the matched write and to pushes the guard can resolve, and
+  says plainly that approving releases the entire command line — rather than claiming
+  nothing will be published, which a compound command containing a form the guard does not
+  resolve (`bash -c "…"`, `sudo -u`) can falsify.
+
+  Test coverage grew from 57 to 125 cases across the two git-guard harnesses. Beyond the
+  new third assertion form (exit 0 **plus** the JSON payload), the harnesses now assert
+  `hookEventName` — without which a decision object is not routable and the ask silently
+  degrades to an allow — cover the `~/.claude/git-guard.conf` path that `/git-guard`
+  actually writes rather than only the environment variable, clear ambient `GIT_GUARD_*`
+  variables so a developer's own settings cannot mask a failure, and fail loudly on a
+  malformed case row instead of skipping it.
 
 ## [0.13.0] - 2026-07-28
 

@@ -148,7 +148,7 @@ A force `branch -f|-D|-M|-C` operation naming a protected branch SHALL NOT be pa
 class and SHALL remain on the deny channel under every value of the setting, because it
 moves or deletes a protected branch pointer without the user being on that branch.
 
-Any value other than the exact strings `deny` and `ask` SHALL be treated as `deny`, so a
+Any value other than the exact string `ask` SHALL be treated as `deny`, so a
 typo or a malformed conf entry fails closed rather than silently loosening the guard.
 
 Introducing this setting SHALL NOT add, remove, widen, or narrow any detection pattern; it
@@ -177,8 +177,8 @@ SHALL only select which output mechanism an already-matched arm uses.
 
 #### Scenario: An unrecognised value fails closed
 
-- **WHEN** `GIT_GUARD_LOCAL_WRITE_CHANNEL` is set to any value other than `deny` or `ask`
-  (for example `ASK`, `yes`, or an empty-but-present entry)
+- **WHEN** `GIT_GUARD_LOCAL_WRITE_CHANNEL` resolves to any value other than the exact
+  lowercase `ask` (for example `ASK`, `yes`, `1`, or `asky`)
 - **THEN** the hook treats it as `deny` and blocks on-branch writes as usual
 
 #### Scenario: An asked on-branch write carries the same message substance as a denial
@@ -187,6 +187,22 @@ SHALL only select which output mechanism an already-matched arm uses.
 - **THEN** the `permissionDecisionReason` names the specific rule that matched and includes
   the unmodified original command as a `!`-prefixed paste-to-override line, in the same
   form the deny channel already uses
+
+#### Scenario: A failed ask delivery falls back to deny, never to allow
+
+- **WHEN** the guard has resolved an on-branch write to `ask` but cannot emit the decision
+  object (for example the `jq` invocation fails because the command text is large enough to
+  exceed the argument limit)
+- **THEN** the hook resolves `permissionDecision: "deny"` (exit 2, reason on stderr) rather
+  than exiting 0 with no object, which the harness would read as a plain allow
+
+#### Scenario: The ask reason does not promise anything about unmatched command segments
+
+- **WHEN** an on-branch write resolves to `ask` as part of a compound command that also
+  contains a form the guard does not resolve (`bash -c "…"`, `sudo -u`, a gitconfig alias)
+- **THEN** the `permissionDecisionReason` scopes its assurance to the matched write and to
+  pushes the guard can resolve, and states that approving releases the whole command — it
+  SHALL NOT claim unconditionally that nothing will be published
 
 ### Requirement: git-guard push arms are never configurable onto the ask channel
 

@@ -146,9 +146,14 @@ shellcheck plugins/<name>/scripts/<script>.sh    # lint
 jq empty plugins/<name>/.claude-plugin/plugin.json && jq empty .claude-plugin/marketplace.json
 ```
 
-git-guard's policy matrix is the reference example: one harness builds temp repos on
-`main`/`develop`/`feature`, pipes crafted tool-call JSON, and checks allow (0) vs block (2)
-across every policy, refspec form, compound command, and false-positive case.
+git-guard's matrix is the reference example: **two** harnesses build temp repos on
+`main`/`develop`/`feature`/`release`, pipe crafted tool-call JSON, and check **three**
+outcomes — allow (0, both streams empty), block (2, reason on stderr, stdout empty), and
+ask (0, `permissionDecision` JSON on stdout, stderr empty) — across every refspec form,
+config-routing path, compound command, channel setting, and false-positive case.
+`tests/run.sh` drives `cases.tsv` plus the cases no TSV row can express (conf-file
+parsing, missing `jq`, a failed ask delivery); `tests/run-routing.sh` covers everything
+needing per-repo `git config` or an absolute `-C` path.
 
 ## Git workflow
 

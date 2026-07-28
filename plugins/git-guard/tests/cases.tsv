@@ -124,8 +124,35 @@ badval-upper-on-main	main	2	GIT_GUARD_LOCAL_WRITE_CHANNEL=ASK git commit -m x
 badval-mixed-on-main	main	2	GIT_GUARD_LOCAL_WRITE_CHANNEL=Ask git commit -m x
 badval-yes-on-main	main	2	GIT_GUARD_LOCAL_WRITE_CHANNEL=yes git commit -m x
 badval-one-on-main	main	2	GIT_GUARD_LOCAL_WRITE_CHANNEL=1 git commit -m x
-badval-empty-on-main	main	2	GIT_GUARD_LOCAL_WRITE_CHANNEL= git commit -m x
 badval-deny-typo-on-main	main	2	GIT_GUARD_LOCAL_WRITE_CHANNEL=asky git commit -m x
+# NOT a fail-closed case: `:-` treats an empty env var as UNSET, so this falls
+# through to the conf file (absent here) and denies by default. Kept to pin that
+# precedence — the conf-file block in run.sh covers empty-env-plus-conf=ask.
+emptyenv-falls-through-to-conf	main	2	GIT_GUARD_LOCAL_WRITE_CHANNEL= git commit -m x
+#
+# --- BLOCK/ASK: the other two history-moving reset forms --------------------
+reset-merge-on-main	main	2	git reset --merge HEAD~1
+reset-keep-on-main	main	2	git reset --keep HEAD~1
+ask-reset-merge-on-main	main	ask	GIT_GUARD_LOCAL_WRITE_CHANNEL=ask git reset --merge HEAD~1
+ask-reset-keep-on-main	main	ask	GIT_GUARD_LOCAL_WRITE_CHANNEL=ask git reset --keep HEAD~1
+#
+# --- BLOCK: the two force-branch tokens with no coverage before -------------
+branch-C-main	feature	2	git branch -C other main
+branch-force-long-main	feature	2	git branch --force main other
+ask-branch-C-main	feature	2	GIT_GUARD_LOCAL_WRITE_CHANNEL=ask git branch -C other main
+ask-branch-force-long-main	feature	2	GIT_GUARD_LOCAL_WRITE_CHANNEL=ask git branch --force main other
+#
+# --- ALLOW: a NON-force branch delete of a protected name is deliberately out
+# of scope (git refuses an unmerged -d itself). Pinned so a future
+# over-correction is a visible test change, not a silent widening.
+branch-d-main-allowed	feature	0	git branch -d main
+#
+# --- BLOCK: remaining push forms, ask-channel twins -------------------------
+ask-push-head-on-main	main	2	GIT_GUARD_LOCAL_WRITE_CHANNEL=ask git push origin HEAD
+ask-push-multi-includes-main	feature	2	GIT_GUARD_LOCAL_WRITE_CHANNEL=ask git push origin main develop
+#
+# --- BLOCK: a deny in an EARLIER segment short-circuits before any ask emits -
+deny-then-ask-no-json	main	2	GIT_GUARD_LOCAL_WRITE_CHANNEL=ask git branch -f master other && git commit -m x
 #
 # --- ALLOW: ordinary work is untouched by the channel setting ---------------
 ask-commit-on-develop	develop	0	GIT_GUARD_LOCAL_WRITE_CHANNEL=ask git commit -m x
